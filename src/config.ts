@@ -40,6 +40,11 @@ export interface PreloaderConfig {
    *  Supports {project} and {user} placeholders. */
   skillLocations: string[];
 
+  /** Enable automatic scanning of skill files for frontmatter-declared triggers.
+   *  When true, skill files with YAML frontmatter register their own triggers
+   *  without needing entries in the config trigger maps. */
+  scannerEnabled: boolean;
+
   /** File extensions to skip trigger detection on (e.g. "node_modules") */
   triggerIgnoreTags: string[];
 
@@ -107,6 +112,7 @@ export const DEFAULT_CONFIG: PreloaderConfig = {
   enableTools: true,
   analytics: false,
   persistAfterCompaction: true,
+  scannerEnabled: true,
   debug: false,
   priority: {},
 };

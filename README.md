@@ -73,7 +73,8 @@ message/file event
 
 | Hook | Purpose |
 |------|---------|
-| `chat.message` | Resolve agent + message + conditional triggers |
+| `chat.message` | Resolve agent + message + keyword triggers |
+| `tool.execute.after` | Fire extension + path triggers when tools touch files |
 | `experimental.chat.system.transform` | Flush queued skills → inject into `output.system[]` |
 | `experimental.session.compacting` | Persist active skill summaries across context trims |
 | `event` (`session.deleted`) | Clean up session cache |
@@ -88,6 +89,34 @@ A skill loads when **any** trigger group matches:
 | 2 | **Path patterns** | `src/Controllers/**` → controller-rules | Layer-specific conventions |
 | 3 | **Agent name** | Agent is `coder-lite` → BE+FE conventions | Role-appropriate context |
 | 4 | **Message keywords** | User says "migration" → migration-rules | Intent-matched skills |
+
+**File extension and path triggers fire at runtime** via the `tool.execute.after` hook — when a tool reads/writes/edits a file, the plugin checks the file path against extension and glob triggers and queues matching skills.
+
+## Skill File Discovery (Scanner)
+
+Skill files can declare their own triggers via YAML frontmatter:
+
+```markdown
+---
+name: php-conventions
+triggers:
+  extensions: [".php"]
+  paths: ["src/Models/**"]
+  agents: ["coder", "coder-lite"]
+  keywords: ["laravel", "php"]
+priority: 10
+always: false
+groups: ["laravel-stack"]
+---
+
+# PHP Conventions
+- PSR-4 autoloading
+- Type hints on all method signatures
+```
+
+The scanner runs at init when `scannerEnabled: true` (default), reads all `.md` files in configured `skillLocations`, and registers their declared triggers automatically. Config-file triggers still work and override scanned triggers for the same skill name.
+
+Set `scannerEnabled: false` to disable auto-discovery and rely entirely on config-file trigger maps.
 
 ## Static File Backend
 
@@ -123,23 +152,26 @@ Configured via `priority` map in config:
 
 ```
 User: "create a migration"
-  → chat.message fires
-  → Resolver: keyword "migration" matches → queue migration-rules
+  → chat.message fires → Resolver: keyword "migration" → queue migration-rules
   → system.transform fires → push migration-rules + php-conventions into system
   → API call enriched → correct conventions followed
 
+User: opens src/Models/User.php
+  → tool.execute.after fires → extension .php + path src/Models/** match
+  → queue: model-rules, php-conventions (deferred to next inject)
+
 User: "now create the model"
-  → chat.message fires
-  → Resolver: keyword "model" matches → queue model-rules
+  → chat.message fires → Resolver: keyword "model" → queue model-rules
   → system.transform fires → model-rules + migration-rules (persisted) + php-conventions
   → SessionManager persists across compaction
 
 User: "create the controller"
-  → chat.message fires
-  → Resolver: keyword "controller" matches → queue controller-rules + crud-rules
+  → chat.message fires → Resolver: keyword "controller" → queue controller-rules + crud-rules
   → system.transform fires → controller-rules + crud-rules + php-conventions
   → migration-rules naturally dropped (budget / no longer relevant)
 ```
+
+Group expansion runs after trigger resolution. If a triggered skill name is a group key, all members load. If a triggered skill belongs to a group (via frontmatter `groups` field), all siblings load. Nested groups expand up to 3 levels.
 
 The system prompt is **re-evaluated every turn**. The LLM gets relevant context for *that step*, not stale history.
 
@@ -213,6 +245,7 @@ Located at (merged in order, later overrides earlier):
 
   // ── Global options ──
   "maxTokens": 8000,
+  "scannerEnabled": true,
   "useSummaries": false,
   "useMinification": false,
   "showToasts": true,
@@ -344,5 +377,6 @@ Output: `dist/index.js` (plugin entry) + `dist/cli.js` (CLI bin).
 
 ## See Also
 
+- [`HOW-TO-USE.md`](./HOW-TO-USE.md) — Step-by-step setup guide: install, create skills, verify, configure
 - [`HOW-IT-WORKS.md`](./HOW-IT-WORKS.md) — Full API payload comparison across 4-turn scenario (with/without plugin), JSON request/response bodies at each step
 - [`context-router.jsonc`](./context-router.jsonc) — Default config example

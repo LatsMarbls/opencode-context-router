@@ -10,6 +10,7 @@
  */
 
 import { loadConfig } from "./config";
+import { scanSkillFiles, type ScannedSkillIndex, type ScannedSkillMeta } from "./scanner";
 
 // ── Resolve config ──────────────────────────────────────────────────────────
 
@@ -33,7 +34,7 @@ function bar(value: number, max: number, width = 20): string {
 
 // ── Commands ─────────────────────────────────────────────────────────────────
 
-function cmdMatrix(config: any): string {
+function cmdMatrix(config: any, scannedIndex?: ScannedSkillIndex): string {
   const lines: string[] = [];
 
   lines.push("\n\x1b[1mContext Routing — Trigger Matrix\x1b[0m");
@@ -89,6 +90,20 @@ function cmdMatrix(config: any): string {
   // 5. skillSettings always
   for (const [name, s] of Object.entries(config.skillSettings ?? {})) {
     if ((s as any).always) addSkill(name, { always: true });
+  }
+
+  // 6. Scanned skills from frontmatter
+  if (scannedIndex) {
+    for (const [name, meta] of scannedIndex) {
+      const props: any = {};
+      if (meta.triggers.extensions?.length) props.ext = meta.triggers.extensions[0];
+      if (meta.triggers.paths?.length) props.path = meta.triggers.paths[0];
+      if (meta.triggers.agents?.length) props.agent = meta.triggers.agents[0];
+      if (meta.triggers.keywords?.length) props.keyword = meta.triggers.keywords[0];
+      if (meta.always) props.always = true;
+      if (meta.priority) props.prio = meta.priority;
+      addSkill(name, props);
+    }
   }
 
   if (skillTriggers.size === 0) {
@@ -250,10 +265,11 @@ function main() {
   }
 
   const config = loadConfig(CWD);
+  const scannedIndex = config.scannerEnabled ? scanSkillFiles(config, CWD) : new Map();
 
   switch (command) {
     case "matrix":
-      console.log(cmdMatrix(config));
+      console.log(cmdMatrix(config, scannedIndex));
       break;
     case "check":
       if (!args[1]) {
@@ -266,7 +282,7 @@ function main() {
       console.log(cmdConfig(config));
       break;
     default:
-      console.log(cmdMatrix(config));
+      console.log(cmdMatrix(config, scannedIndex));
       break;
   }
 }

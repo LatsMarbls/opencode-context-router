@@ -12,6 +12,7 @@ import type { Plugin, PluginInput, Hooks } from "@opencode-ai/plugin";
 import { loadConfig } from "./config.js";
 import { SkillLoader, type LoadedSkill } from "./loader.js";
 import { Resolver } from "./resolver.js";
+import { scanSkillFiles, type ScannedSkillIndex } from "./scanner.js";
 import { getOrCreateSession, deleteSession } from "./session.js";
 import type { PreloaderConfig } from "./config.js";
 
@@ -23,9 +24,18 @@ const plugin: Plugin = async ({ client, project, directory }: PluginInput) => {
   // 1. Load configuration (project + user + defaults)
   const config = loadConfig(projectDir);
 
-  // 2. Create core services
+  // 2. Scan skill files for self-declared triggers
+  let scannedIndex: ScannedSkillIndex = new Map();
+  if (config.scannerEnabled) {
+    scannedIndex = scanSkillFiles(config, projectDir);
+    if (config.debug && scannedIndex.size > 0) {
+      console.log(`[context-routing] Scanned ${scannedIndex.size} skill files with frontmatter triggers`);
+    }
+  }
+
+  // 3. Create core services
   const loader = new SkillLoader(config, projectDir);
-  const resolver = new Resolver(config);
+  const resolver = new Resolver(config, scannedIndex);
 
   if (config.debug) {
     console.log(`[context-routing] Initialized (project: ${projectDir})`);
@@ -58,6 +68,10 @@ const plugin: Plugin = async ({ client, project, directory }: PluginInput) => {
         config.groups["always"].forEach((n) => skillNames.add(n));
       }
       resolver.getAlwaysOnSkills().forEach((n) => skillNames.add(n));
+
+      // Expand group names → member skills
+      const expanded = resolver.expandGroups(Array.from(skillNames));
+      expanded.forEach((n) => skillNames.add(n));
 
       if (skillNames.size === 0) return;
 
@@ -129,6 +143,48 @@ const plugin: Plugin = async ({ client, project, directory }: PluginInput) => {
         deleteSession(sessionID);
         if (config.debug) {
           console.log(`[context-routing] Cleaned up session ${sessionID}`);
+        }
+      }
+    },
+
+    // ── Tool hooks (file/extension triggers) ─────────────────────────
+
+    "tool.execute.after": async (input, output) => {
+      // Only fire on file-operation tools
+      const filePath = input.args?.path;
+      if (!filePath || typeof filePath !== "string") return;
+
+      // Skip ignored paths
+      if (config.triggerIgnoreTags.some(tag =>
+        filePath.replace(/\\/g, "/").toLowerCase().includes(tag.toLowerCase())
+      )) return;
+
+      const mgr = getOrCreateSession(input.sessionID, config.maxTokens, config.debug);
+
+      const skillNames = resolver.resolveFileTriggers(filePath);
+      if (skillNames.length === 0) return;
+
+      // Expand group names → member skills
+      const expanded = resolver.expandGroups(skillNames);
+      const toLoad = expanded.filter(n => !mgr.hasSkill(n));
+      if (toLoad.length === 0) return;
+
+      const loaded: LoadedSkill[] = [];
+      for (const name of toLoad) {
+        const skill = loader.loadStaticSkill(name);
+        if (skill) loaded.push(skill);
+      }
+
+      if (loaded.length > 0) {
+        mgr.queueSkills(loaded, `tool:${input.tool} → ${filePath}`);
+        if (config.showToasts) {
+          client.tui.showToast({
+            body: {
+              message: `Preloaded: ${loaded.map((s) => s.name).join(", ")}`,
+              variant: "info",
+              duration: 3_000,
+            },
+          });
         }
       }
     },

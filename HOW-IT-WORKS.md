@@ -100,18 +100,18 @@ The plugin fires on `chat.message`, evaluates all 4 trigger dimensions, queued s
     { role: "system", content: [
       "AGENTS.md instructions",
 
-      "<preloaded-skill name='migration-rules'>
+      "<context-route name='migration-rules'>
        - Use Schema::create() not DB::statement()
        - Always add ->index() on foreign key columns
        - Table names are snake_case plural (pia_users, role_permissions)
        - Use ->timestamps() for created_at/updated_at
-       </preloaded-skill>",
+       </context-route>",
 
-      "<preloaded-skill name='php-conventions'>
+      "<context-route name='php-conventions'>
        - Namespace: App\\Models, App\\Http\\Controllers, etc.
        - PSR-4 autoloading
        - Type hints on all method signatures
-       </preloaded-skill>"
+       </context-route>"
     ]},
     { role: "user", content: "create a migration for users table" }
   ]
@@ -138,21 +138,21 @@ The plugin fires on `chat.message`, evaluates all 4 trigger dimensions, queued s
     { role: "system", content: [
       "AGENTS.md instructions",
 
-      "<preloaded-skill name='model-rules'>
+      "<context-route name='model-rules'>
        - Extend the base Model class
        - Use HasFactory trait
        - Table name derived from class name (snake_case plural)
        - $fillable or $guarded for mass assignment
-       </preloaded-skill>",
+       </context-route>",
 
-      "<preloaded-skill name='model-trait-rules'>
+      "<context-route name='model-trait-rules'>
        - PiaCore models use trait composition
        - Available: HasTimestamps, HasSlug, HasArchives, HasActivityLogs
        - Import via use App\\Models\\Traits\\HasTimestamps
-       </preloaded-skill>",
+       </context-route>",
 
-      "<preloaded-skill name='php-conventions'>...</preloaded-skill>",
-      "<preloaded-skill name='migration-rules'>...</preloaded-skill>"
+      "<context-route name='php-conventions'>...</context-route>",
+      "<context-route name='migration-rules'>...</context-route>"
     ]},
     { role: "assistant", content: "Schema::create('pia_users', ...)" },
     { role: "user", content: "now create the User model" }
@@ -185,19 +185,19 @@ The plugin fires on `chat.message`, evaluates all 4 trigger dimensions, queued s
     { role: "system", content: [
       "AGENTS.md instructions",
 
-      "<preloaded-skill name='controller-rules'>
+      "<context-route name='controller-rules'>
        - Extend ResourceController, not Controller
        - Methods: index, show, create, store, edit, update, destroy
        - Return Response or JsonResponse types
-       </preloaded-skill>",
+       </context-route>",
 
-      "<preloaded-skill name='crud-rules'>
+      "<context-route name='crud-rules'>
        - PiaCore uses Action classes per SCEUDRIX flag
        - ShowUserAction, CreateUserAction, EditUserAction, etc.
        - Actions are in App\\Actions\\User namespace
-       </preloaded-skill>",
+       </context-route>",
 
-      "<preloaded-skill name='php-conventions'>...</preloaded-skill>"
+      "<context-route name='php-conventions'>...</context-route>"
     ]},
     ...
     { role: "user", content: "create the controller" }
@@ -231,14 +231,14 @@ The plugin fires on `chat.message`, evaluates all 4 trigger dimensions, queued s
     { role: "system", content: [
       "AGENTS.md instructions",
 
-      "<preloaded-skill name='request-rules'>
+      "<context-route name='request-rules'>
        - Extend BaseFormRequest, not FormRequest
        - Validation rules in rules() method
        - Authorize in authorize() method
        - Custom error messages in messages() method
-       </preloaded-skill>",
+       </context-route>",
 
-      "<preloaded-skill name='php-conventions'>...</preloaded-skill>"
+      "<context-route name='php-conventions'>...</context-route>"
     ]},
     ...
     { role: "user", content: "add validation rules" }
@@ -306,6 +306,36 @@ The plugin never calls the LLM itself. It only enriches what goes *into* the nex
 | 3 | **Agent name** | Agent is `coder-lite` → be+fe conventions | Role-appropriate context |
 | 4 | **Keywords** | Message contains "migration" → migration-rules | Intent-matched skills |
 
+**Extension and path triggers fire at two points:**
+- At init: scanner discovers skill files with YAML frontmatter and registers their declared triggers
+- At runtime: `tool.execute.after` hook checks file/extension/path against the resolver when `read`, `write`, or `edit` tools operate on files
+
+---
+
+## Skill File Discovery (Scanner)
+
+Skill files can declare their own triggers via YAML frontmatter — no need to manually configure every skill in the config file:
+
+```markdown
+---
+name: php-conventions
+triggers:
+  extensions: [".php"]
+  paths: ["src/Models/**"]
+  agents: ["coder", "coder-lite"]
+  keywords: ["laravel", "php"]
+priority: 10
+always: false
+groups: ["laravel-stack"]
+---
+
+# PHP Conventions
+- PSR-4 autoloading
+- Type hints on all method signatures
+```
+
+The scanner runs at init when `scannerEnabled: true` (default), reads all `.md` files in configured `skillLocations`, and registers them automatically. Config-file triggers still work — and override scanned triggers for the same skill name.
+
 ---
 
 ## Where "State" Lives
@@ -320,19 +350,30 @@ The plugin never calls the LLM itself. It only enriches what goes *into* the nex
 ### Data Flow
 
 ```
-User types message
+User types message / opens file / runs tool
        │
        ▼
 ┌─────────────────────────────────────────┐
 │  HOOK 1: chat.message                   │
-│  Evaluates 4 trigger dimensions         │
+│  Evaluates agent + message + keyword    │
+│  triggers via Resolver                  │
 │  SessionManager queues matched skills   │
 │  Subject to priority budget (maxTokens) │
 └─────────────────────────────────────────┘
        │
        ▼
 ┌─────────────────────────────────────────┐
-│  HOOK 2: system.transform               │
+│  HOOK 2: tool.execute.after             │
+│  Fires after read/write/edit tools      │
+│  Extracts file path from tool args      │
+│  Checks extension + path pattern        │
+│  triggers via resolver.resolveFileTriggers()
+│  Queues matching skills (deferred)      │
+└─────────────────────────────────────────┘
+       │
+       ▼
+┌─────────────────────────────────────────┐
+│  HOOK 3: system.transform               │
 │  Flushes pending skills into            │
 │  output.system[] via .push() (in-place) │
 └─────────────────────────────────────────┘
@@ -345,7 +386,7 @@ LLM API — one-shot, stateless — returns project-aware response
        │
        ▼
 ┌─────────────────────────────────────────┐
-│  HOOK 3: session.compacting (if fires)  │
+│  HOOK 4: session.compacting (if fires)  │
 │  Persists skill summaries into          │
 │  output.context[] to survive trim       │
 └─────────────────────────────────────────┘

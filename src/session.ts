@@ -106,7 +106,7 @@ export class SessionManager {
     if (skills.length === 0) return "";
 
     const parts = skills.map(s => {
-      return `<preloaded-skill name="${s.name}">\n${s.content.trim()}\n</preloaded-skill>`;
+      return `<context-route name="${s.name}">\n${s.content.trim()}\n</context-route>`;
     });
 
     return `\n${parts.join("\n\n")}\n`;
