@@ -1,0 +1,8 @@
+node_modules/
+dist/
+*.tgz
+.env
+.DS_Store
+.codebase-index
+.codebase-index-store/
+.opencode/
