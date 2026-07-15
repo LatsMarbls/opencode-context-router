@@ -34,7 +34,7 @@ function bar(value: number, max: number, width = 20): string {
 
 // ── Commands ─────────────────────────────────────────────────────────────────
 
-function cmdMatrix(config: any, scannedIndex?: ScannedSkillIndex): string {
+export function cmdMatrix(config: any, scannedIndex?: ScannedSkillIndex): string {
   const lines: string[] = [];
 
   lines.push("\n\x1b[1mContext Routing — Trigger Matrix\x1b[0m");
@@ -169,7 +169,7 @@ function cmdMatrix(config: any, scannedIndex?: ScannedSkillIndex): string {
   return lines.join("\n");
 }
 
-function cmdCheck(filePath: string, config: any): string {
+export function cmdCheck(filePath: string, config: any): string {
   const lines: string[] = [];
   const ext = filePath.split(".").pop()?.toLowerCase() ?? "";
   const fileName = filePath.split(/[\\/]/).pop() ?? "";
@@ -216,7 +216,7 @@ function cmdCheck(filePath: string, config: any): string {
   return lines.join("\n");
 }
 
-function cmdConfig(config: any): string {
+export function cmdConfig(config: any): string {
   const lines: string[] = [];
   lines.push("\n\x1b[1mConfig Overview\x1b[0m");
   lines.push("━".repeat(48));
@@ -240,7 +240,7 @@ function cmdConfig(config: any): string {
   return lines.join("\n");
 }
 
-function cmdHelp(): string {
+export function cmdHelp(): string {
   return `
 \x1b[1mcontext-routing\x1b[0m — OpenCode skill trigger visualizer
 

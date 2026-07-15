@@ -22,6 +22,7 @@
 
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";
+import * as yaml from "js-yaml";
 import type { PreloaderConfig } from "./config.js";
 
 // ── Types ───────────────────────────────────────────────────────────────────
@@ -127,7 +128,7 @@ function findFilesFromTemplate(
 
   const results: FoundFile[] = [];
 
-  if (afterName.startsWith("/")) {
+  if (afterName.startsWith("/") || afterName.startsWith("\\")) {
     // Directory-based: skills/{name}/SKILL.md
     // afterName = /SKILL.md → the file inside each dir
     const innerFile = afterName.slice(1);
@@ -154,7 +155,7 @@ function findFilesFromTemplate(
   return results;
 }
 
-// ── Frontmatter parser (no YAML dep) ────────────────────────────────────────
+// ── Frontmatter parser (js-yaml) ───────────────────────────────────────────────
 
 interface ParsedFrontmatter {
   name?: string;
@@ -177,65 +178,50 @@ function parseFrontmatter(content: string): {
   const endIdx = content.indexOf("\n---", 3);
   if (endIdx === -1) return { frontmatter: null, body: content };
 
-  const yaml = content.slice(3, endIdx).trim();
+  const rawYaml = content.slice(3, endIdx).trim();
   const body = content.slice(endIdx + 4).trimStart();
 
-  const parsed: ParsedFrontmatter = {};
-  let currentKey: string | null = null;
+  let parsed: Record<string, unknown>;
+  try {
+    parsed = yaml.load(rawYaml) as Record<string, unknown>;
+  } catch {
+    return { frontmatter: null, body };
+  }
+  if (!parsed || typeof parsed !== "object") {
+    return { frontmatter: null, body };
+  }
 
-  for (const rawLine of yaml.split("\n")) {
-    const line = rawLine.trimEnd();
+  const frontmatter: ParsedFrontmatter = {};
 
-    // Nested key (2-space indent under triggers)
-    const nestedMatch = line.match(/^ {2}(\w[\w-]*):\s*(.*)$/);
-    if (nestedMatch && currentKey === "triggers") {
-      const key = nestedMatch[1] as keyof ScannedSkillTriggers;
-      const val = nestedMatch[2].trim();
-      if (!parsed.triggers) parsed.triggers = {};
-      if (["extensions", "paths", "agents", "keywords"].includes(key)) {
-        parsed.triggers[key] = parseArrayValue(val);
+  if (typeof parsed.name === "string") {
+    frontmatter.name = parsed.name;
+  }
+
+  if (parsed.triggers && typeof parsed.triggers === "object") {
+    const t = parsed.triggers as Record<string, unknown>;
+    frontmatter.triggers = {};
+    for (const key of ["extensions", "paths", "agents", "keywords"] as const) {
+      const val = t[key];
+      if (Array.isArray(val)) {
+        frontmatter.triggers[key] = val.map(String);
       }
-      continue;
     }
-
-    // Top-level key
-    const topMatch = line.match(/^(\w[\w-]*):\s*(.*)$/);
-    if (!topMatch) continue;
-
-    currentKey = topMatch[1];
-    const val = topMatch[2].trim();
-
-    switch (currentKey) {
-      case "name":
-        parsed.name = val;
-        break;
-      case "triggers":
-        // Next indented lines are children
-        break;
-      case "priority":
-        parsed.priority = parseInt(val, 10);
-        break;
-      case "always":
-        parsed.always = val === "true";
-        break;
-      case "groups":
-        parsed.groups = parseArrayValue(val);
-        break;
+    if (Object.keys(frontmatter.triggers).length === 0) {
+      delete frontmatter.triggers;
     }
   }
 
-  return { frontmatter: Object.keys(parsed).length > 0 ? parsed : null, body };
-}
-
-function parseArrayValue(val: string): string[] {
-  if (!val) return [];
-  // Handle: [item1, item2] or "item1"
-  if (val.startsWith("[") && val.endsWith("]")) {
-    return val
-      .slice(1, -1)
-      .split(",")
-      .map((s) => s.trim().replace(/^["']|["']$/g, ""))
-      .filter(Boolean);
+  if (typeof parsed.priority === "number") {
+    frontmatter.priority = parsed.priority;
   }
-  return [val.replace(/^["']|["']$/g, "")];
+
+  if (typeof parsed.always === "boolean") {
+    frontmatter.always = parsed.always;
+  }
+
+  if (Array.isArray(parsed.groups)) {
+    frontmatter.groups = parsed.groups.map(String);
+  }
+
+  return { frontmatter: Object.keys(frontmatter).length > 0 ? frontmatter : null, body };
 }
