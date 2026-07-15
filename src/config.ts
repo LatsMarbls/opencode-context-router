@@ -72,6 +72,10 @@ export interface PreloaderConfig {
   /** Keep skills across compaction boundaries */
   persistAfterCompaction: boolean;
 
+  /** Accumulate skills across turns (true) or evaluate fresh each turn (false).
+   *  When false, only skills triggered by the current message/agent/file are injected. */
+  accumulateSkills: boolean;
+
   /** Enable verbose logging */
   debug: boolean;
 
@@ -112,6 +116,7 @@ export const DEFAULT_CONFIG: PreloaderConfig = {
   enableTools: true,
   analytics: false,
   persistAfterCompaction: true,
+  accumulateSkills: true,
   scannerEnabled: true,
   debug: false,
   priority: {},

@@ -2,11 +2,15 @@
  * Plugin entry point — hooks registration for OpenCode.
  *
  * Architecture:
- *   tool.execute.after → resolve file triggers → queue skills
- *   chat.message       → resolve agent + content triggers → queue skills
+ *   chat.message       → resolve agent + content + path triggers → queue skills
  *   system.transform   → flush queue → inject into system prompt
  *   session.compacting → persist skill list across compaction
  *   event              → cleanup on session deleted
+ *
+ * Path triggers: file paths found in user messages (`` src/Models/User.php ``)
+ * are resolved against extension-based and path-pattern triggers — same
+ * resolution logic as the old tool.execute.after hook, but synchronous in
+ * the same turn. No deferred queues or survival pools needed.
  */
 import type { Plugin, PluginInput, Hooks } from "@opencode-ai/plugin";
 import { loadConfig } from "./config.js";
@@ -49,6 +53,12 @@ const plugin: Plugin = async ({ client, project, directory }: PluginInput) => {
       const sessionID = input.sessionID;
       const mgr = getOrCreateSession(sessionID, config.maxTokens, config.debug);
 
+      // When accumulateSkills is false, clear previous skills so only
+      // current-turn triggers are injected (fresh evaluation each turn).
+      if (!config.accumulateSkills) {
+        mgr.clear();
+      }
+
       const skillNames = new Set<string>();
 
       // Agent-based triggers
@@ -60,6 +70,13 @@ const plugin: Plugin = async ({ client, project, directory }: PluginInput) => {
       const messageText = extractTextFromParts(output.parts);
       if (messageText) {
         resolver.resolveMessageTriggers(messageText).forEach((n) => skillNames.add(n));
+
+        // Path triggers — extract file paths from message, resolve extension
+        // and path-pattern skills synchronously (same turn, no pool needed).
+        const paths = extractPaths(messageText);
+        for (const p of paths) {
+          resolver.resolveFileTriggers(p).forEach((n) => skillNames.add(n));
+        }
       }
 
       // Always-on skills
@@ -147,47 +164,6 @@ const plugin: Plugin = async ({ client, project, directory }: PluginInput) => {
       }
     },
 
-    // ── Tool hooks (file/extension triggers) ─────────────────────────
-
-    "tool.execute.after": async (input, output) => {
-      // Only fire on file-operation tools
-      const filePath = input.args?.path;
-      if (!filePath || typeof filePath !== "string") return;
-
-      // Skip ignored paths
-      if (config.triggerIgnoreTags.some(tag =>
-        filePath.replace(/\\/g, "/").toLowerCase().includes(tag.toLowerCase())
-      )) return;
-
-      const mgr = getOrCreateSession(input.sessionID, config.maxTokens, config.debug);
-
-      const skillNames = resolver.resolveFileTriggers(filePath);
-      if (skillNames.length === 0) return;
-
-      // Expand group names → member skills
-      const expanded = resolver.expandGroups(skillNames);
-      const toLoad = expanded.filter(n => !mgr.hasSkill(n));
-      if (toLoad.length === 0) return;
-
-      const loaded: LoadedSkill[] = [];
-      for (const name of toLoad) {
-        const skill = loader.loadStaticSkill(name);
-        if (skill) loaded.push(skill);
-      }
-
-      if (loaded.length > 0) {
-        mgr.queueSkills(loaded, `tool:${input.tool} → ${filePath}`);
-        if (config.showToasts) {
-          client.tui.showToast({
-            body: {
-              message: `Preloaded: ${loaded.map((s) => s.name).join(", ")}`,
-              variant: "info",
-              duration: 3_000,
-            },
-          });
-        }
-      }
-    },
   } satisfies Hooks;
 
   // Add custom tool conditionally (avoids spread with ternary issue)
@@ -294,6 +270,22 @@ function findSkillTrigger(
 export default plugin;
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
+
+/**
+ * Extract file-path-like strings from message text.
+ * Matches patterns with at least one path separator and a file extension.
+ * Normalizes backslashes to forward slashes.
+ */
+function extractPaths(text: string): string[] {
+  const results = new Set<string>();
+  // Regex: optional Windows drive + path segments + filename.ext (2-6 char extension)
+  const pathRegex = /(?:[a-zA-Z]:[\\/])?(?:[\w.-]+[\\/])+[\w.-]+\.(\w{2,6})/g;
+  let match: RegExpExecArray | null;
+  while ((match = pathRegex.exec(text)) !== null) {
+    results.add(match[0].replace(/\\/g, "/"));
+  }
+  return Array.from(results);
+}
 
 function extractTextFromParts(parts: unknown[]): string {
   if (!parts || !Array.isArray(parts)) return "";

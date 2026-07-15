@@ -112,10 +112,13 @@
   "maxTokens": 8000,
 
   // ── Feature flags ─────────────────────────────────────────────────────────
-  "useSummaries": false,        // Use LLM summaries instead of full skill content
-  "useMinification": false,     // Strip comments/whitespace from skill markdown
+  "scannerEnabled": true,       // Auto-discover skills from YAML frontmatter (default: true)
+  "useSummaries": false,        // [STUB] Use LLM summaries instead of full skill content
+  "useMinification": false,     // [STUB] Strip comments/whitespace from skill markdown
   "showToasts": true,           // Show TUI toast on skill load/unload
   "enableTools": true,          // Expose /preload_skills in-session command
-  "persistAfterCompaction": true, // Survive OpenCode context trimming
+  "persistAfterCompaction": true,  // Survive OpenCode context trimming
+  "accumulateSkills": true,     // Accumulate across turns (true). When false,
+                                // each turn gets only its own triggered skills.
   "debug": false                // Verbose console logging
 }

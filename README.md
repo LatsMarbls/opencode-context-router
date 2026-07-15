@@ -95,7 +95,6 @@ message/file event
 | Hook | Purpose |
 |------|---------|
 | `chat.message` | Resolve agent + message + keyword triggers |
-| `tool.execute.after` | Fire extension + path triggers when tools touch files |
 | `experimental.chat.system.transform` | Flush queued skills → inject into `output.system[]` |
 | `experimental.session.compacting` | Persist active skill summaries across context trims |
 | `event` (`session.deleted`) | Clean up session cache |
