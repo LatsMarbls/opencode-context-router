@@ -123,14 +123,29 @@ function findFilesFromTemplate(
 
   if (!resolved.includes("{name}")) return [];
 
+  // Support * wildcard: expand to each namespace subdirectory
+  const starIdx = resolved.indexOf("*");
+  if (starIdx !== -1) {
+    const prefix = resolved.slice(0, starIdx);
+    const suffix = resolved.slice(starIdx + 1);
+    if (!existsSync(prefix)) return [];
+    const results: FoundFile[] = [];
+    const entries = readdirSync(prefix, { withFileTypes: true });
+    for (const entry of entries) {
+      if (!entry.isDirectory()) continue;
+      const nsTemplate = prefix + entry.name + suffix;
+      results.push(...findFilesFromTemplate(nsTemplate, projectDir));
+    }
+    return results;
+  }
+
   const [beforeName, afterName] = resolved.split("{name}");
   if (!existsSync(beforeName)) return [];
 
   const results: FoundFile[] = [];
 
   if (afterName.startsWith("/")) {
-    // Directory-based: skills/{name}/SKILL.md
-    // afterName = /SKILL.md → the file inside each dir
+    // Directory-based: skills/{name}/SKILL.md (or skills/ns/{name}/SKILL.md via *)
     const innerFile = afterName.slice(1);
     const entries = readdirSync(beforeName, { withFileTypes: true });
     for (const entry of entries) {
