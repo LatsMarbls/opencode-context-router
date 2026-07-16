@@ -152,7 +152,7 @@ describe("SessionManager", () => {
       mgr.getActiveSkills(); // calculate budget
 
       const summary = mgr.getSkillsSummary();
-      expect(summary).toContain("## Preloaded Skills");
+      expect(summary).toContain("## Context Routes");
       expect(summary).toContain("**php**");
       expect(summary).toContain("static-file");
       expect(summary).toContain("priority 10");

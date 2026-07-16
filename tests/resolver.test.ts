@@ -148,11 +148,13 @@ describe("Resolver — keyword triggers", () => {
     expect(r.resolveMessageTriggers("create a migration for users")).toContain("migration-rules");
   });
 
-  it("matches keyword as regex from config", () => {
+  it("matches keyword as whole word from config", () => {
     const r = new Resolver(makeConfig({
-      contentTriggers: { "\\bcreate\\b": ["creation-rules"] },
+      contentTriggers: { create: ["creation-rules"] },
     }));
     expect(r.resolveMessageTriggers("please create a model")).toContain("creation-rules");
+    // Does NOT match inside hyphenated word
+    expect(r.resolveMessageTriggers("create-rule")).not.toContain("creation-rules");
   });
 
   it("regex failure falls back to substring", () => {
