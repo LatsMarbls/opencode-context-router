@@ -169,7 +169,7 @@ function cmdMatrix(config: any, scannedIndex?: ScannedSkillIndex): string {
   return lines.join("\n");
 }
 
-function cmdCheck(filePath: string, config: any): string {
+function cmdCheck(filePath: string, config: any, scannedIndex?: ScannedSkillIndex): string {
   const lines: string[] = [];
   const ext = filePath.split(".").pop()?.toLowerCase() ?? "";
   const fileName = filePath.split(/[\\/]/).pop() ?? "";
@@ -200,6 +200,16 @@ function cmdCheck(filePath: string, config: any): string {
       for (const n of names as string[]) {
         matched.push(n);
         reasons.push(`path ${pat}`);
+      }
+    }
+  }
+
+  // 3. Scanned skills from frontmatter (extensions only)
+  if (scannedIndex) {
+    for (const [name, meta] of scannedIndex) {
+      if (meta.triggers.extensions?.includes(`.${ext}`) || meta.triggers.extensions?.includes(ext)) {
+        matched.push(name);
+        reasons.push(`scanned extension .${ext}`);
       }
     }
   }
@@ -276,7 +286,7 @@ function main() {
         console.error("\x1b[31mError:\x1b[0m Usage: context-routing check <file>");
         process.exit(1);
       }
-      console.log(cmdCheck(args[1], config));
+      console.log(cmdCheck(args[1], config, scannedIndex));
       break;
     case "config":
       console.log(cmdConfig(config));

@@ -178,15 +178,26 @@ const plugin: Plugin = async ({ client, project, directory }: PluginInput) => {
             if (skill) loaded.push(skill);
           }
           if (loaded.length > 0) {
-            mgr.queueSkills(loaded, "content.match");
-            if (config.showToasts) {
-              client.tui.showToast({
-                body: {
-                  message: `Context routed: ${loaded.map((s) => s.name).join(", ")}`,
-                  variant: "info",
-                  duration: 3_000,
-                },
-              });
+            // Dedup: skip skills whose content already appears in system message
+            const existingSystem = output.messages
+              .filter((m: any) => m.info?.role === "system")
+              .map((m: any) => extractTextFromParts(m.parts))
+              .join("\n");
+            const deduped = loaded.filter(s => !existingSystem.includes(s.content.trim()));
+            if (deduped.length < loaded.length) {
+              log(`[cr-debug]   dedup: ${loaded.length - deduped.length} skills already in system message`);
+            }
+            if (deduped.length > 0) {
+              mgr.queueSkills(deduped, "content.match");
+              if (config.showToasts) {
+                client.tui.showToast({
+                  body: {
+                    message: `Context routed: ${deduped.map((s) => s.name).join(", ")}`,
+                    variant: "info",
+                    duration: 3_000,
+                  },
+                });
+              }
             }
           }
         }
@@ -218,14 +229,26 @@ const plugin: Plugin = async ({ client, project, directory }: PluginInput) => {
         return;
       }
 
-      const formatted = mgr.getFormattedSkills();
-      if (!formatted) {
-        log(`[cr-debug]   ⚠ getFormattedSkills() returned empty`);
+      const active = mgr.getActiveSkills();
+      if (active.length === 0) {
+        log(`[cr-debug]   ⚠ no active skills`);
         return;
       }
 
-      log(`[cr-debug]   ✅ injecting skills into system prompt (${formatted.length} chars)`);
-      output.system.push(formatted);
+      // Dedup: skip skills whose content already appears in system prompt
+      const existingSystem = output.system.join("\n");
+      const newSkills = active.filter(s => !existingSystem.includes(s.content.trim()));
+      if (newSkills.length === 0) {
+        log(`[cr-debug]   ⚠ all ${active.length} skills already present in system prompt — skipping`);
+        return;
+      }
+
+      const formatted = newSkills.map(s =>
+        `<context-route name="${s.name}">\n${s.content.trim()}\n</context-route>`
+      ).join("\n\n");
+
+      log(`[cr-debug]   ✅ injecting ${newSkills.length}/${active.length} skills into system prompt (${formatted.length} chars)`);
+      output.system.push(`\n${formatted}\n`);
       injectedThisTurn = "system";
 
       if (config.debug) {
