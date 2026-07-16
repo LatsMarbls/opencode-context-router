@@ -12,6 +12,8 @@ export interface SkillSettings {
   useSummary?: boolean;
   /** Always load this skill regardless of triggers */
   always?: boolean;
+  /** Override global TTL for this skill (ms, 0 = no TTL, never evict) */
+  skillTTL?: number;
 }
 
 export interface PreloaderConfig {
@@ -81,6 +83,14 @@ export interface PreloaderConfig {
 
   /** Global priority map (skillName → weight). Higher = survives budget cuts. */
   priority: Record<string, number>;
+
+  /** Default TTL for loaded skills (ms). Skills evicted after this time.
+   *  0 = no TTL eviction (load once, never drop). Default 600000 (10 min). */
+  skillTTL: number;
+
+  /** File cache TTL (ms). How long a skill file read is cached before
+   *  re-reading from disk. Default 60000 (1 min). */
+  cacheFileTTL: number;
 }
 
 // ── Defaults ────────────────────────────────────────────────────────────────
@@ -120,6 +130,8 @@ export const DEFAULT_CONFIG: PreloaderConfig = {
   scannerEnabled: true,
   debug: false,
   priority: {},
+  skillTTL: 600_000,
+  cacheFileTTL: 60_000,
 };
 
 // ── Config resolution ──────────────────────────────────────────────────────
@@ -176,8 +188,9 @@ function stripJsoncComments(jsonc: string): string {
 
 function deepMerge(target: any, source: any): void {
   for (const key of Object.keys(source)) {
-    if (Array.isArray(source[key]) && Array.isArray(target[key])) {
-      target[key] = [...target[key], ...source[key]];
+    if (Array.isArray(source[key])) {
+      // Arrays override, not concat — user config replaces defaults
+      target[key] = [...source[key]];
     } else if (isPlainObject(source[key]) && isPlainObject(target[key])) {
       deepMerge(target[key], source[key]);
     } else {

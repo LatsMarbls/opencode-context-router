@@ -18,13 +18,22 @@ export interface LoadedSkill {
 
 // ── Skill Loader ────────────────────────────────────────────────────────────
 
+interface CacheEntry {
+  content: string;
+  loadedAt: number;
+}
+
 export class SkillLoader {
-  private fileCache = new Map<string, string>();
+  private fileCache = new Map<string, CacheEntry>();
+  private readonly cacheTTL: number;
 
   constructor(
     private config: PreloaderConfig,
     private projectDir: string,
-  ) {}
+    cacheTTL: number = 60_000, // 1 min default
+  ) {
+    this.cacheTTL = cacheTTL;
+  }
 
   /**
    * Load a single skill by name. Tries all locations in order.
@@ -71,10 +80,15 @@ export class SkillLoader {
   // ── Private ──────────────────────────────────────────────────────────────
 
   private readFile(absPath: string): string | null {
-    if (this.fileCache.has(absPath)) return this.fileCache.get(absPath)!;
+    const cached = this.fileCache.get(absPath);
+    const now = Date.now();
+    if (cached && (now - cached.loadedAt) < this.cacheTTL) {
+      return cached.content;
+    }
+    // Stale or missing — re-read from disk
     try {
       const content = readFileSync(absPath, "utf-8");
-      this.fileCache.set(absPath, content);
+      this.fileCache.set(absPath, { content, loadedAt: now });
       return content;
     } catch {
       return null;

@@ -22,6 +22,7 @@
 
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";
+import yaml from "js-yaml";
 import type { PreloaderConfig } from "./config.js";
 
 // ── Types ───────────────────────────────────────────────────────────────────
@@ -154,88 +155,72 @@ function findFilesFromTemplate(
   return results;
 }
 
-// ── Frontmatter parser (no YAML dep) ────────────────────────────────────────
+// ── Frontmatter parser (js-yaml) ────────────────────────────────────────────
 
 interface ParsedFrontmatter {
   name?: string;
-  triggers?: ScannedSkillTriggers;
+  triggers?: {
+    extensions?: string[];
+    paths?: string[];
+    agents?: string[];
+    keywords?: string[];
+  };
   priority?: number;
   always?: boolean;
   groups?: string[];
 }
 
+/**
+ * Parse YAML frontmatter from a skill file.
+ * Handles all valid YAML via js-yaml (lists of maps, nested objects,
+ * quoted strings, multi-line, etc.)
+ */
 function parseFrontmatter(content: string): {
   frontmatter: ParsedFrontmatter | null;
   body: string;
 } {
-  // Must start with opening delimiter
   if (!content.startsWith("---")) {
     return { frontmatter: null, body: content };
   }
 
-  // Find closing delimiter
+  // Find closing delimiter on its own line
   const endIdx = content.indexOf("\n---", 3);
   if (endIdx === -1) return { frontmatter: null, body: content };
 
-  const yaml = content.slice(3, endIdx).trim();
+  const yamlStr = content.slice(3, endIdx).trim();
   const body = content.slice(endIdx + 4).trimStart();
 
-  const parsed: ParsedFrontmatter = {};
-  let currentKey: string | null = null;
+  if (!yamlStr) return { frontmatter: null, body };
 
-  for (const rawLine of yaml.split("\n")) {
-    const line = rawLine.trimEnd();
-
-    // Nested key (2-space indent under triggers)
-    const nestedMatch = line.match(/^ {2}(\w[\w-]*):\s*(.*)$/);
-    if (nestedMatch && currentKey === "triggers") {
-      const key = nestedMatch[1] as keyof ScannedSkillTriggers;
-      const val = nestedMatch[2].trim();
-      if (!parsed.triggers) parsed.triggers = {};
-      if (["extensions", "paths", "agents", "keywords"].includes(key)) {
-        parsed.triggers[key] = parseArrayValue(val);
-      }
-      continue;
+  try {
+    const doc = yaml.load(yamlStr) as Record<string, unknown> | undefined;
+    if (!doc || typeof doc !== "object") {
+      return { frontmatter: null, body };
     }
 
-    // Top-level key
-    const topMatch = line.match(/^(\w[\w-]*):\s*(.*)$/);
-    if (!topMatch) continue;
+    const parsed: ParsedFrontmatter = {};
 
-    currentKey = topMatch[1];
-    const val = topMatch[2].trim();
+    if (typeof doc.name === "string") parsed.name = doc.name;
+    if (typeof doc.priority === "number") parsed.priority = doc.priority;
+    if (typeof doc.always === "boolean") parsed.always = doc.always;
 
-    switch (currentKey) {
-      case "name":
-        parsed.name = val;
-        break;
-      case "triggers":
-        // Next indented lines are children
-        break;
-      case "priority":
-        parsed.priority = parseInt(val, 10);
-        break;
-      case "always":
-        parsed.always = val === "true";
-        break;
-      case "groups":
-        parsed.groups = parseArrayValue(val);
-        break;
+    if (Array.isArray(doc.groups)) {
+      parsed.groups = doc.groups.map(String);
     }
-  }
 
-  return { frontmatter: Object.keys(parsed).length > 0 ? parsed : null, body };
-}
+    if (doc.triggers && typeof doc.triggers === "object") {
+      const t = doc.triggers as Record<string, unknown>;
+      const triggers: ParsedFrontmatter["triggers"] = {};
+      if (Array.isArray(t.extensions)) triggers.extensions = t.extensions.map(String);
+      if (Array.isArray(t.paths)) triggers.paths = t.paths.map(String);
+      if (Array.isArray(t.agents)) triggers.agents = t.agents.map(String);
+      if (Array.isArray(t.keywords)) triggers.keywords = t.keywords.map(String);
+      parsed.triggers = triggers;
+    }
 
-function parseArrayValue(val: string): string[] {
-  if (!val) return [];
-  // Handle: [item1, item2] or "item1"
-  if (val.startsWith("[") && val.endsWith("]")) {
-    return val
-      .slice(1, -1)
-      .split(",")
-      .map((s) => s.trim().replace(/^["']|["']$/g, ""))
-      .filter(Boolean);
+    return { frontmatter: Object.keys(parsed).length > 0 ? parsed : null, body };
+  } catch {
+    // YAML parse failure — treat as no frontmatter
+    return { frontmatter: null, body };
   }
-  return [val.replace(/^["']|["']$/g, "")];
 }

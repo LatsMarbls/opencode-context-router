@@ -98,28 +98,24 @@ export class Resolver {
 
   /**
    * Given a user message, resolve skills triggered by keywords.
+   * Uses whole-word matching to avoid false triggers:
+   *   "typescript" matches "use typescript" but NOT "typescript-rule"
+   *   "ts"         matches "ts" but NOT "its" or "typescript"
    */
   resolveMessageTriggers(messageText: string): string[] {
     const matched = new Set<string>();
 
     // Config keyword triggers
     for (const [pattern, skills] of Object.entries(this.config.contentTriggers)) {
-      try {
-        const re = new RegExp(pattern, "im");
-        if (re.test(messageText)) {
-          skills.forEach(s => matched.add(s));
-        }
-      } catch {
-        if (messageText.toLowerCase().includes(pattern.toLowerCase())) {
-          skills.forEach(s => matched.add(s));
-        }
+      if (matchesWholeWord(messageText, pattern)) {
+        skills.forEach(s => matched.add(s));
       }
     }
 
     // Scanned keyword triggers
     for (const [name, meta] of this.scannedIndex) {
       for (const kw of meta.triggers.keywords ?? []) {
-        if (messageText.toLowerCase().includes(kw.toLowerCase())) {
+        if (matchesWholeWord(messageText, kw)) {
           matched.add(name);
           break;
         }
@@ -302,4 +298,32 @@ function shouldIgnorePath(absPath: string, ignoreTags: string[]): boolean {
   if (ignoreTags.length === 0) return false;
   const normalized = absPath.replace(/\\/g, "/").toLowerCase();
   return ignoreTags.some(tag => normalized.includes(tag.toLowerCase()));
+}
+
+/**
+ * Whole-word keyword match. Ensures "typescript" matches "use typescript"
+ * but NOT "typescript-rule" or "typescripting".
+ * Also handles:
+ *   - "ts" does NOT match "its"
+ *   - "controller" does NOT match "controllers"
+ *   - "c++" matches "write c++ code" (regex special chars escaped)
+ *   - Multi-word phrases like "vue component"
+ * Case-insensitive.
+ *
+ * Uses negative lookbehind/lookahead for [\w-] to prevent matching inside
+ * hyphenated compounds (kebab-case) and adjacent word chars.
+ */
+function matchesWholeWord(text: string, keyword: string): boolean {
+  if (!keyword) return false;
+  // Escape regex special chars so literal keywords don't break the regex
+  const escaped = keyword.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  try {
+    // (?<!\w-) ensures not preceded by word char or hyphen
+    // (?![\w-]) ensures not followed by word char or hyphen
+    // This prevents "typescript" matching inside "typescript-rule"
+    const re = new RegExp(`(?<![\\w-])${escaped}(?![\\w-])`, "i");
+    return re.test(text);
+  } catch {
+    return false;
+  }
 }
