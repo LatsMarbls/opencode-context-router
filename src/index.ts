@@ -108,7 +108,7 @@ const plugin: Plugin = async ({ client, project, directory }: PluginInput) => {
         if (config.showToasts) {
           client.tui.showToast({
             body: {
-              message: `Preloaded: ${loaded.map((s) => s.name).join(", ")}`,
+              message: `Context routed: ${loaded.map((s) => s.name).join(", ")}`,
               variant: "info",
               duration: 3_000,
             },
@@ -169,8 +169,8 @@ const plugin: Plugin = async ({ client, project, directory }: PluginInput) => {
   // Add custom tool conditionally (avoids spread with ternary issue)
   if (config.enableTools) {
     hooks.tool = {
-      preload_skills: {
-        description: "Show all loaded skills grouped by file extension with budget usage",
+      context_routes: {
+        description: "Show all context-routed skills grouped by file extension with budget usage",
         args: {} as Record<string, never>,
         async execute(_args: Record<string, never>, context: any) {
           const mgr = getOrCreateSession(
@@ -191,7 +191,7 @@ const plugin: Plugin = async ({ client, project, directory }: PluginInput) => {
           // ── Active skills table ──────────────────────────────────
           const active = mgr.getActiveSkills();
           if (active.length === 0) {
-            return `${budgetLine}\n\nNo skills preloaded.`;
+            return `${budgetLine}\n\nNo context-routed skills.`;
           }
 
           const tableHeader = "| Skill | Source | Priority | Tokens | Trigger |";
@@ -224,7 +224,7 @@ const plugin: Plugin = async ({ client, project, directory }: PluginInput) => {
           }
 
           return [
-            `## Preloaded Skills`,
+            `## Context Routes`,
             budgetLine,
             "",
             "### Active",

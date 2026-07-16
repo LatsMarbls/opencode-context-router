@@ -173,7 +173,7 @@ Once the plugin is active, skills inject automatically. Trigger types:
 
 ### Check loaded skills in-session
 
-Type `/preload_skills` or `/skills` in the chat. Shows the same dashboard as the CLI — budget bar, active skills, dropped skills.
+Type `/context_routes` or `/skills` in the chat. Shows the same dashboard as the CLI — budget bar, active skills, dropped skills.
 
 ---
 
@@ -225,7 +225,7 @@ Later overrides earlier:
 | `maxTokens` | 8000 | Token budget. Lower = fewer skills loaded |
 | `scannerEnabled` | true | Auto-discover skills from frontmatter |
 | `showToasts` | true | Show skill-change toasts in chat |
-| `enableTools` | true | Enable `/preload_skills` tool |
+| `enableTools` | true | Enable `/context_routes` tool |
 | `debug` | false | Log trigger evaluations to console |
 
 ---
@@ -267,4 +267,4 @@ Config-file triggers and frontmatter triggers merge — config wins for the same
 | `npx context-routing` | Show skill matrix |
 | `npx context-routing check <file>` | Check triggers for a file |
 | `npx context-routing config` | Show resolved config |
-| `/preload_skills` | In-session skill dashboard |
+| `/context_routes` | In-session skill dashboard |

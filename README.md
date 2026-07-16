@@ -299,7 +299,7 @@ npx context-routing config       # Show resolved config
 Shows all skills from all trigger maps grouped by dimension, with extension groups and budget. Output:
 
 ```
-## Preloaded Skills
+## Context Routes
 **Token Budget:** ███░░░░░░░░░░░░░░░░░ 15% (1200 / 8000 tok · 4 skills)
 
 ### Active
@@ -360,10 +360,10 @@ Shows all commands and flags.
 
 ## Built-in Tool
 
-When `enableTools: true` (default), a `/skills` (or `preload_skills`) tool is exposed:
+When `enableTools: true` (default), a `/skills` (or `context_routes`) tool is exposed:
 
 ```
-/preload_skills
+/context_routes
 ```
 
 Shows the same dashboard as the CLI: budget bar, active table, per-extension groups, dropped list. Available in-session without leaving the chat.

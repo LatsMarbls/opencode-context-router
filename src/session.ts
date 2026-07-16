@@ -123,7 +123,7 @@ export class SessionManager {
       `- **${s.name}** (${s.source}, priority ${s.priority})`
     );
 
-    return `## Preloaded Skills\n${lines.join("\n")}\n`;
+    return `## Context Routes\n${lines.join("\n")}\n`;
   }
 
   /**
