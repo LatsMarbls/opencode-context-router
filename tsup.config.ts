@@ -9,8 +9,8 @@ export default defineConfig({
   dts: true,
   sourcemap: true,
   clean: true,
-  // Zero runtime deps — bundle nothing external
-  noExternal: [],
+  // Bundle all deps so the plugin has zero runtime dependencies
+  noExternal: ["js-yaml"],
   // Target is Bun/Node 20+ with modern JS
   target: "es2022",
   // npm/npx bin wrapper handles the shebang — no banner needed

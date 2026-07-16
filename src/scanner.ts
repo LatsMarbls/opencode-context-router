@@ -22,7 +22,7 @@
 
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";
-import yaml from "js-yaml";
+import * as yaml from "js-yaml";
 import type { PreloaderConfig } from "./config.js";
 
 // ── Types ───────────────────────────────────────────────────────────────────
