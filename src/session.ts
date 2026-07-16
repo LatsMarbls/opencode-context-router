@@ -6,6 +6,8 @@ export interface SkillQueueEntry {
   skill: LoadedSkill;
   /** Unix timestamp when queued */
   queuedAt: number;
+  /** Unix timestamp when promoted to active (used for TTL eviction) */
+  loadedAt: number;
   /** How it was triggered (for debugging) */
   trigger: string;
 }
@@ -40,6 +42,7 @@ export class SessionManager {
     sessionID: string,
     private maxTokens: number = 8_000,
     private debug: boolean = false,
+    private skillTTL: number = 600_000, // 10 min default
   ) {
     this.sessionID = sessionID;
   }
@@ -60,6 +63,7 @@ export class SessionManager {
       this.pendingQueue.set(skill.name, {
         skill,
         queuedAt: Date.now(),
+        loadedAt: 0, // set when promoted to active
         trigger,
       });
 
@@ -75,7 +79,10 @@ export class SessionManager {
    */
   flushPending(): LoadedSkill[] {
     for (const [name, entry] of this.pendingQueue) {
+      entry.loadedAt = Date.now();
       this.activeSkills.set(name, entry);
+      // If this skill was previously dropped by budget, re-activate clears that
+      this.droppedCache.delete(name);
     }
     this.pendingQueue.clear();
     return this.getActiveSkills();
@@ -83,9 +90,11 @@ export class SessionManager {
 
   /**
    * Get all active skills, sorted by priority descending, then by queue time ascending.
-   * Applies token budget — drops lowest-priority skills when over limit.
+   * Filters stale skills by TTL, then applies token budget.
    */
   getActiveSkills(): LoadedSkill[] {
+    this.evictStale();
+
     const skills = Array.from(this.activeSkills.values())
       .sort((a, b) => {
         // Higher priority first
@@ -96,6 +105,20 @@ export class SessionManager {
       });
 
     return this.applyTokenBudget(skills.map(e => e.skill));
+  }
+
+  /** Remove skills whose TTL has expired */
+  private evictStale(): void {
+    if (this.skillTTL <= 0) return;
+    const now = Date.now();
+    for (const [name, entry] of this.activeSkills) {
+      if (entry.loadedAt > 0 && (now - entry.loadedAt) > this.skillTTL) {
+        this.activeSkills.delete(name);
+        if (this.debug) {
+          console.log(`[context-routing] Evicted stale skill "${name}" (TTL ${this.skillTTL}ms exceeded)`);
+        }
+      }
+    }
   }
 
   /**
@@ -160,20 +183,20 @@ export class SessionManager {
 
     for (const skill of skills) {
       const tokens = this.estimateTokens(skill.content);
-      if (total + tokens > this.maxTokens && result.length > 0) {
-        // Track dropped skill
+      if (total + tokens > this.maxTokens) {
+        // Track dropped skill (still iterate to capture all for dashboard)
         this.droppedCache.set(skill.name, {
           skill,
           queuedAt: Date.now(),
+          loadedAt: 0,
           trigger: "dropped:budget",
         });
         if (this.debug) {
           console.log(`[context-routing] Budget exceeded at "${skill.name}" (${total}+${tokens} > ${this.maxTokens})`);
         }
-        continue; // Don't break — lower-prio might still fit?
-        // Actually, skills are already sorted by priority descending.
-        // Once we exceed budget on a priority level, lower-prio won't fit either.
-        // But we still track all dropped for the dashboard.
+        // Skills sorted by priority descending — once budget exceeded,
+        // no lower-priority skill will fit either
+        continue;
       }
       total += tokens;
       result.push(skill);
@@ -186,6 +209,8 @@ export class SessionManager {
    * Get current budget status (used tokens, limit, dropped skills).
    */
   getBudgetStatus(): BudgetStatus {
+    this.evictStale();
+
     const allSkills = Array.from(this.activeSkills.values())
       .sort((a, b) => b.skill.priority - a.skill.priority);
 
@@ -193,7 +218,7 @@ export class SessionManager {
     const loaded: LoadedSkill[] = [];
     for (const entry of allSkills) {
       const t = this.estimateTokens(entry.skill.content);
-      if (used + t <= this.maxTokens || loaded.length === 0) {
+      if (used + t <= this.maxTokens) {
         used += t;
         loaded.push(entry.skill);
       }
@@ -227,10 +252,11 @@ export function getOrCreateSession(
   sessionID: string,
   maxTokens?: number,
   debug?: boolean,
+  skillTTL?: number,
 ): SessionManager {
   let mgr = sessions.get(sessionID);
   if (!mgr) {
-    mgr = new SessionManager(sessionID, maxTokens, debug);
+    mgr = new SessionManager(sessionID, maxTokens, debug, skillTTL);
     sessions.set(sessionID, mgr);
   }
   return mgr;

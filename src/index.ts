@@ -34,7 +34,7 @@ const plugin: Plugin = async ({ client, project, directory }: PluginInput) => {
   }
 
   // 3. Create core services
-  const loader = new SkillLoader(config, projectDir);
+  const loader = new SkillLoader(config, projectDir, config.cacheFileTTL);
   const resolver = new Resolver(config, scannedIndex);
 
   if (config.debug) {
@@ -47,7 +47,7 @@ const plugin: Plugin = async ({ client, project, directory }: PluginInput) => {
 
     "chat.message": async (input, output) => {
       const sessionID = input.sessionID;
-      const mgr = getOrCreateSession(sessionID, config.maxTokens, config.debug);
+      const mgr = getOrCreateSession(sessionID, config.maxTokens, config.debug, config.skillTTL);
 
       const skillNames = new Set<string>();
 
@@ -105,7 +105,7 @@ const plugin: Plugin = async ({ client, project, directory }: PluginInput) => {
     "experimental.chat.system.transform": async (input, output) => {
       if (!input.sessionID) return;
 
-      const mgr = getOrCreateSession(input.sessionID, config.maxTokens, config.debug);
+      const mgr = getOrCreateSession(input.sessionID, config.maxTokens, config.debug, config.skillTTL);
 
       // Flush pending → active
       mgr.flushPending();
@@ -127,7 +127,7 @@ const plugin: Plugin = async ({ client, project, directory }: PluginInput) => {
     "experimental.session.compacting": async (input, output) => {
       if (!config.persistAfterCompaction) return;
 
-      const mgr = getOrCreateSession(input.sessionID, config.maxTokens, config.debug);
+      const mgr = getOrCreateSession(input.sessionID, config.maxTokens, config.debug, config.skillTTL);
 
       const summary = mgr.getSkillsSummary();
       if (!summary) return;
@@ -201,6 +201,7 @@ const plugin: Plugin = async ({ client, project, directory }: PluginInput) => {
             context.sessionID,
             config.maxTokens,
             config.debug,
+            config.skillTTL,
           );
 
           // ── Budget bar ───────────────────────────────────────────

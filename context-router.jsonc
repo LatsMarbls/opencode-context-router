@@ -96,6 +96,12 @@
   // lowest-priority skills are dropped from injection.
   "maxTokens": 8000,
 
+  // ── Time-to-live settings ──────────────────────────────────────────────────
+  // Skills older than this are evicted automatically. 0 = no TTL eviction.
+  // Per-skill override via skillSettings (e.g. {"my-skill": {"skillTTL": 0}})
+  "skillTTL": 600000,       // 10 min default (ms)
+  "cacheFileTTL": 60000,    // File cache refresh interval (ms)
+
   // ── Feature flags ─────────────────────────────────────────────────────────
   "useSummaries": false,        // Use LLM summaries instead of full skill content
   "useMinification": false,     // Strip comments/whitespace from skill markdown
