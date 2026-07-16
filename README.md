@@ -1,35 +1,35 @@
 ```text
- ██████╗ ██████╗ ███╗   ██╗████████╗███████╗██╗  ██╗████████╗
-██╔════╝██╔═══██╗████╗  ██║╚══██╔══╝██╔════╝╚██╗██╔╝╚══██╔══╝
-██║     ██║   ██║██╔██╗ ██║   ██║   █████╗   ╚███╔╝    ██║
-██║     ██║   ██║██║╚██╗██║   ██║   ██╔══╝   ██╔██╗    ██║
-╚██████╗╚██████╔╝██║ ╚████║   ██║   ███████╗██╔╝ ██╗   ██║
- ╚═════╝ ╚═════╝ ╚═╝  ╚═══╝   ╚═╝   ╚══════╝╚═╝  ╚═╝   ╚═╝
-
-██████╗  ██████╗ ██╗   ██╗████████╗███████╗██████╗
-██╔══██╗██╔═══██╗██║   ██║╚══██╔══╝██╔════╝██╔══██╗
-██████╔╝██║   ██║██║   ██║   ██║   █████╗  ██████╔╝
-██╔══██╗██║   ██║██║   ██║   ██║   ██╔══╝  ██╔══██╗
-██║  ██║╚██████╔╝╚██████╔╝   ██║   ███████╗██║  ██║
-╚═╝  ╚═╝ ╚═════╝  ╚═════╝    ╚═╝   ╚══════╝╚═╝  ╚═╝
-
-────────────────────────────────────────────────────────────────────
-
-        Dynamic Context Injection for OpenCode
-
-        Load only the skills that matter.
-        Every turn. Every request. Zero wasted tokens.
-
-────────────────────────────────────────────────────────────────────
+                           ██████╗ ██████╗ ███╗   ██╗████████╗███████╗██╗  ██╗████████╗
+                          ██╔════╝██╔═══██╗████╗  ██║╚══██╔══╝██╔════╝╚██╗██╔╝╚══██╔══╝
+                          ██║     ██║   ██║██╔██╗ ██║   ██║   █████╗   ╚███╔╝    ██║
+                          ██║     ██║   ██║██║╚██╗██║   ██║   ██╔══╝   ██╔██╗    ██║
+                          ╚██████╗╚██████╔╝██║ ╚████║   ██║   ███████╗██╔╝ ██╗   ██║
+                           ╚═════╝ ╚═════╝ ╚═╝  ╚═══╝   ╚═╝   ╚══════╝╚═╝  ╚═╝   ╚═╝
+                          
+                               ██████╗  ██████╗ ██╗   ██╗████████╗███████╗██████╗
+                               ██╔══██╗██╔═══██╗██║   ██║╚══██╔══╝██╔════╝██╔══██╗
+                               ██████╔╝██║   ██║██║   ██║   ██║   █████╗  ██████╔╝
+                               ██╔══██╗██║   ██║██║   ██║   ██║   ██╔══╝  ██╔══██╗
+                               ██║  ██║╚██████╔╝╚██████╔╝   ██║   ███████╗██║  ██║
+                               ╚═╝  ╚═╝ ╚═════╝  ╚═════╝    ╚═╝   ╚══════╝╚═╝  ╚═╝
+                      
+                      ────────────────────────────────────────────────────────────────────
+                      
+                                   Dynamic Context Injection for OpenCode
+                           
+                                      Load only the skills that matter.
+                                 Every turn. Every request. Zero wasted tokens.
+                      
+                      ────────────────────────────────────────────────────────────────────
 ```
 
-> Context Router is an OpenCode plugin that dynamically injects relevant skill files into the next LLM request based on **what you're doing**, **where you're working**, and **what you're asking**.
+> Context Router is an OpenCode plugin that dynamically injects relevant skill files into the LLM request based on **what you're doing**, **where you're working**, and **what you're asking**.
 
 ---
 
 ## WHY CONTEXT ROUTER?
 
-OpenCode plugins run every turn. Context Routing evaluates **what you're working on**, loads **only the relevant skill files** (from disk), and injects them into the system prompt of the *next* API call. The LLM stays stateless — the input just gets richer.
+OpenCode plugins run every turn. Context Routing evaluates **what you're working on**, loads **only the relevant skill files** (from disk), and injects them into the system prompt of the API call. The LLM stays stateless — the input just gets richer.
 
 Without it, the LLM guesses generic patterns:
 ```
@@ -110,7 +110,7 @@ A skill loads when **any** trigger group matches:
 | 3 | **Agent name** | Agent is `coder-lite` → BE+FE conventions | Role-appropriate context |
 | 4 | **Message keywords** | User says "migration" → migration-rules | Intent-matched skills |
 
-**File extension and path triggers fire at runtime** via the `tool.execute.after` hook — when a tool reads/writes/edits a file, the plugin checks the file path against extension and glob triggers and queues matching skills.
+**All trigger resolution happens synchronously** in the `chat.message` hook. When you type a message, the plugin extracts file paths from the text (e.g., `src/Models/User.php`) and checks them against extension and glob triggers. No `tool.execute.after` hook needed — path triggers resolve from what you type, same turn.
 
 ## Skill File Discovery (Scanner)
 
@@ -176,12 +176,9 @@ User: "create a migration"
   → system.transform fires → push migration-rules + php-conventions into system
   → API call enriched → correct conventions followed
 
-User: opens src/Models/User.php
-  → tool.execute.after fires → extension .php + path src/Models/** match
-  → queue: model-rules, php-conventions (deferred to next inject)
-
-User: "now create the model"
-  → chat.message fires → Resolver: keyword "model" → queue model-rules
+User: "now create the model (src/Models/User.php)"
+  → chat.message fires → Resolver: keyword "model" + path src/Models/**
+  → queue model-rules + php-conventions
   → system.transform fires → model-rules + migration-rules (persisted) + php-conventions
   → SessionManager persists across compaction
 
@@ -271,6 +268,9 @@ Located at (merged in order, later overrides earlier):
   "showToasts": true,
   "enableTools": true,
   "persistAfterCompaction": true,
+  "accumulateSkills": true,   // false = fresh evaluation each turn
+  "skillTTL": 600000,         // ms — skills evicted after inactivity (0 = no TTL)
+  "cacheFileTTL": 60000,      // ms — how long skill file reads are cached
   "debug": false
 }
 ```
@@ -282,7 +282,7 @@ Located at (merged in order, later overrides earlier):
 | `fileTypeSkills` | `Record<ext, string[]>` | Matches `.ext` |
 | `pathPatterns` | `Record<glob, string[]>` | Glob patterns relative to project root |
 | `agentSkills` | `Record<agent, string[]>` | Matches current agent name |
-| `contentTriggers` | `Record<keyword, string[]>` | Case-insensitive substring in message |
+| `contentTriggers` | `Record<keyword, string[]>` | Whole-word match in message text |
 
 ## CLI
 

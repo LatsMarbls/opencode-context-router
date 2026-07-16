@@ -85,7 +85,7 @@ Every API call only knows about `AGENTS.md` + conversation history. Project conv
 
 ## With Plugin — Project-Aware Responses
 
-The plugin fires on `chat.message`, evaluates all 4 trigger dimensions, queued skills get injected into the **system prompt** of the next API call. The API remains stateless; the input is just richer.
+The plugin fires on `chat.message`, evaluates all 4 trigger dimensions, and injects queued skills into the **system prompt** of the same API call. The API remains stateless; the input is just richer.
 
 ```
 ─── PROMPT 1: "create a migration for users table" ─────────────────────
@@ -293,7 +293,7 @@ Turn 3 (controller):  system = [AGENTS.md + controller-rules + crud-rules + php-
 Turn 4 (validation):  system = [AGENTS.md + request-rules + php-conventions]
 ```
 
-The plugin never calls the LLM itself. It only enriches what goes *into* the next stateless call.
+The plugin never calls the LLM itself. It only enriches what goes *into* each stateless call.
 
 ---
 
@@ -306,9 +306,9 @@ The plugin never calls the LLM itself. It only enriches what goes *into* the nex
 | 3 | **Agent name** | Agent is `coder-lite` → be+fe conventions | Role-appropriate context |
 | 4 | **Keywords** | Message contains "migration" → migration-rules | Intent-matched skills |
 
-**Extension and path triggers fire at two points:**
+**All trigger resolution happens synchronously in `chat.message`:**
 - At init: scanner discovers skill files with YAML frontmatter and registers their declared triggers
-- At runtime: `tool.execute.after` hook checks file/extension/path against the resolver when `read`, `write`, or `edit` tools operate on files
+- At runtime: file paths are extracted from user message text (e.g., `src/Models/User.php`) and matched against extension and path triggers — no separate hook needed
 
 ---
 
@@ -350,30 +350,24 @@ The scanner runs at init when `scannerEnabled: true` (default), reads all `.md` 
 ### Data Flow
 
 ```
-User types message / opens file / runs tool
+User types message (text + file paths)
+       │
+       ▼
+┌──────────────────────────────────────────────────┐
+│  HOOK 1: chat.message                             │
+│  Resolver evaluates all 4 triggers:               │
+│  • Agent name → agentSkills                       │
+│  • Message text keywords → contentTriggers        │
+│  • File paths in message → fileTypeSkills         │
+│  • File paths in message → pathPatterns           │
+│  • Always-on skills injected regardless           │
+│  SessionManager queues matched skills             │
+│  Subject to priority budget (maxTokens)           │
+└──────────────────────────────────────────────────┘
        │
        ▼
 ┌─────────────────────────────────────────┐
-│  HOOK 1: chat.message                   │
-│  Evaluates agent + message + keyword    │
-│  triggers via Resolver                  │
-│  SessionManager queues matched skills   │
-│  Subject to priority budget (maxTokens) │
-└─────────────────────────────────────────┘
-       │
-       ▼
-┌─────────────────────────────────────────┐
-│  HOOK 2: tool.execute.after             │
-│  Fires after read/write/edit tools      │
-│  Extracts file path from tool args      │
-│  Checks extension + path pattern        │
-│  triggers via resolver.resolveFileTriggers()
-│  Queues matching skills (deferred)      │
-└─────────────────────────────────────────┘
-       │
-       ▼
-┌─────────────────────────────────────────┐
-│  HOOK 3: system.transform               │
+│  HOOK 2: system.transform               │
 │  Flushes pending skills into            │
 │  output.system[] via .push() (in-place) │
 └─────────────────────────────────────────┘
@@ -386,10 +380,10 @@ LLM API — one-shot, stateless — returns project-aware response
        │
        ▼
 ┌─────────────────────────────────────────┐
-│  HOOK 4: session.compacting (if fires)  │
+│  HOOK 3: session.compacting (if fires)  │
 │  Persists skill summaries into          │
 │  output.context[] to survive trim       │
 └─────────────────────────────────────────┘
 ```
 
-The plugin is a **context assembler**, not an LLM caller. It looks at what you're doing, figures out which skills are relevant, and injects them into the next API call's system prompt. The API call itself remains fully stateless.
+The plugin is a **context assembler**, not an LLM caller. It looks at what you're doing, figures out which skills are relevant, and injects them into the API call's system prompt. The API call itself remains fully stateless.

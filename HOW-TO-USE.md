@@ -165,9 +165,9 @@ Once the plugin is active, skills inject automatically. Trigger types:
 
 | Trigger | When It Fires |
 |---------|---------------|
-| `keywords` | Message text contains a matching word |
-| `extensions` | Tool reads/writes a file with matching extension |
-| `paths` | Tool operates on a file matching a glob pattern |
+| `keywords` | Message text contains a matching keyword (whole-word, not substring) |
+| `extensions` | Message text contains a file path with matching extension |
+| `paths` | Message text contains a file path matching a glob pattern |
 | `agents` | Current agent name matches |
 | `always` | Every turn, no condition |
 
@@ -224,6 +224,9 @@ Later overrides earlier:
 |--------|---------|-------------|
 | `maxTokens` | 8000 | Token budget. Lower = fewer skills loaded |
 | `scannerEnabled` | true | Auto-discover skills from frontmatter |
+| `accumulateSkills` | true | Keep skills across turns (false = fresh evaluation each turn) |
+| `skillTTL` | 600000 | Skill cache TTL in ms (0 = no eviction). Skills dropped after inactivity |
+| `cacheFileTTL` | 60000 | How long skill file reads are cached before re-reading from disk |
 | `showToasts` | true | Show skill-change toasts in chat |
 | `enableTools` | true | Enable `/context_routes` tool |
 | `debug` | false | Log trigger evaluations to console |
