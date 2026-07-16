@@ -357,6 +357,7 @@ function findSkillTrigger(
   return "frontmatter";
 }
 
+export const server = plugin;
 export default plugin;
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
