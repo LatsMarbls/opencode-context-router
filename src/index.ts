@@ -66,8 +66,16 @@ const plugin: Plugin = async ({ client, project, directory }: PluginInput) => {
         resolver.resolveAgentTriggers(input.agent).forEach((n) => skillNames.add(n));
       }
 
-      // Message content triggers
-      const messageText = extractTextFromParts(output.parts);
+      // Message content: try parts first, fall back to summary body
+      let messageText = extractTextFromParts(output.parts);
+      if (!messageText && output.message.summary?.body) {
+        messageText = output.message.summary.body;
+      }
+
+      if (config.debug && messageText) {
+        console.log(`[context-routing] message text (${messageText.length}ch): ${messageText.slice(0, 200)}`);
+      }
+
       if (messageText) {
         resolver.resolveMessageTriggers(messageText).forEach((n) => skillNames.add(n));
 
