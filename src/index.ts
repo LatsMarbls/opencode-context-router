@@ -2,15 +2,23 @@
  * Plugin entry point — hooks registration for OpenCode.
  *
  * Architecture:
- *   chat.message       → resolve agent + content + path triggers → queue skills
- *   system.transform   → flush queue → inject into system prompt
- *   session.compacting → persist skill list across compaction
- *   event              → cleanup on session deleted
+ *   chat.message                  → session init + reset turn flag
+ *   experimental.chat.messages.transform → resolve triggers → load → queue
+ *                                          → inject as system message (FALLBACK)
+ *   experimental.chat.system.transform    → flush queue → inject into
+ *                                          system prompt (PREFERRED)
+ *   experimental.session.compacting      → persist skill list across compaction
+ *   event                               → cleanup on session deleted
  *
- * Path triggers: file paths found in user messages (`` src/Models/User.php ``)
- * are resolved against extension-based and path-pattern triggers — same
- * resolution logic as the old tool.execute.after hook, but synchronous in
- * the same turn. No deferred queues or survival pools needed.
+ * Hook order detection:
+ *   OpenCode's hook invocation order for messages.transform vs system.transform
+ *   is undocumented. Instead of guessing, we detect which fires FIRST each turn
+ *   via an `injectedThisTurn` flag. Whichever fires first injects skills.
+ *   The other hook skips (avoids duplication).
+ *
+ *   When system.transform fires first → skills inject into system prompt (ideal)
+ *   When messages.transform fires first → skills inject as system message (fallback)
+ *   Either way: same-turn visibility ✓
  */
 import type { Plugin, PluginInput, Hooks } from "@opencode-ai/plugin";
 import { loadConfig } from "./config.js";
@@ -18,7 +26,33 @@ import { SkillLoader, type LoadedSkill } from "./loader.js";
 import { Resolver } from "./resolver.js";
 import { scanSkillFiles, type ScannedSkillIndex } from "./scanner.js";
 import { getOrCreateSession, deleteSession } from "./session.js";
-import type { PreloaderConfig } from "./config.js";
+import { appendFileSync } from "fs";
+import { join } from "path";
+import { homedir } from "os";
+
+// ── File Logger ─────────────────────────────────────────────────────────────
+// Writes diagnostics to ~/.config/opencode/plugins/context-routing/debug.log
+// so user can share without terminal access.
+const LOG_FILE = join(homedir(), ".config", "opencode", "plugins", "context-routing", "debug.log");
+
+function log(...args: unknown[]) {
+  const msg = args.map(a => (typeof a === "string" ? a : JSON.stringify(a))).join(" ");
+  const line = `[${new Date().toISOString()}] ${msg}\n`;
+  try {
+    appendFileSync(LOG_FILE, line, "utf-8");
+  } catch {
+    // silently fail if file can't be written
+  }
+}
+
+// ── Turn-scoped state ──────────────────────────────────────────────────────
+
+/**
+ * Tracks which hook injected skills this turn.
+ * Reset to `null` at the start of each turn (chat.message).
+ * Whichever hook fires first sets this; the other skips.
+ */
+let injectedThisTurn: "messages" | "system" | null = null;
 
 // ── Plugin Definition ───────────────────────────────────────────────────────
 
@@ -41,50 +75,83 @@ const plugin: Plugin = async ({ client, project, directory }: PluginInput) => {
   const loader = new SkillLoader(config, projectDir, config.cacheFileTTL);
   const resolver = new Resolver(config, scannedIndex);
 
+  log(`[cr-debug] Plugin init START. projectDir=${projectDir}`);
+  log(`[cr-debug]   config: skills=${JSON.stringify(config.skills)}, fileTypeSkills=${JSON.stringify(Object.keys(config.fileTypeSkills))}`);
+  log(`[cr-debug]   contentTriggers=${JSON.stringify(Object.keys(config.contentTriggers))}`);
+  log(`[cr-debug]   agentSkills=${JSON.stringify(Object.keys(config.agentSkills))}`);
+  log(`[cr-debug]   scannerEnabled=${config.scannerEnabled}, debug=${config.debug}`);
+
   if (config.debug) {
     console.log(`[context-routing] Initialized (project: ${projectDir})`);
   }
 
-  // 3. Build hooks object (conditional tool property to avoid spread issues)
+  // 4. Build hooks object
   const hooks: Hooks = {
-    // ── Chat hooks ────────────────────────────────────────────────────
+    // ── Chat message — session init + reset turn flag ──────────────────
 
-    "chat.message": async (input, output) => {
-      const sessionID = input.sessionID;
-      const mgr = getOrCreateSession(sessionID, config.maxTokens, config.debug, config.skillTTL);
-
-      // When accumulateSkills is false, clear previous skills so only
-      // current-turn triggers are injected (fresh evaluation each turn).
+    "chat.message": async (input) => {
+      log(`[cr-debug] chat.message fired. sessionID=${input.sessionID}`);
+      injectedThisTurn = null;
+      const mgr = getOrCreateSession(input.sessionID, config.maxTokens, config.debug, config.skillTTL);
       if (!config.accumulateSkills) {
         mgr.clear();
       }
+    },
 
+    // ── Messages transform — resolve triggers + load skills only ──────
+    // Injection is done by system.transform (fires after, targets system prompt).
+
+    "experimental.chat.messages.transform": async (_input, output) => {
+      log(`[cr-debug] messages.transform fired. total messages=${output.messages.length}`);
+
+      // Find last user message (fully assembled with parts)
+      const userMessages = output.messages.filter(
+        (m: any) => m.info?.role === "user",
+      );
+      log(`[cr-debug]   user messages=${userMessages.length}`);
+      const lastUserMsg = userMessages[userMessages.length - 1];
+      if (!lastUserMsg) {
+        log(`[cr-debug]   ⚠ no last user message found`);
+        return;
+      }
+
+      const sessionID = lastUserMsg.info?.sessionID;
+      const agentName = (lastUserMsg.info as any)?.agent;
+      const messageText = extractTextFromParts(lastUserMsg.parts);
+      log(`[cr-debug]   sessionID=${sessionID}, agent=${agentName}, text="${messageText?.substring(0, 80)}"`);
+
+      if (!sessionID) {
+        log(`[cr-debug]   ⚠ no sessionID on lastUserMsg.info`);
+        return;
+      }
+
+      const mgr = getOrCreateSession(sessionID, config.maxTokens, config.debug, config.skillTTL);
+
+      // ── Resolve triggers ──────────────────────────────────────────
       const skillNames = new Set<string>();
 
       // Agent-based triggers
-      if (input.agent) {
-        resolver.resolveAgentTriggers(input.agent).forEach((n) => skillNames.add(n));
+      if (agentName) {
+        const agents = resolver.resolveAgentTriggers(agentName);
+        log(`[cr-debug]   agent triggers: ${JSON.stringify(agents)}`);
+        agents.forEach((n) => skillNames.add(n));
+      } else {
+        log(`[cr-debug]   no agent name`);
       }
 
-      // Message content: try parts first, fall back to summary body
-      let messageText = extractTextFromParts(output.parts);
-      if (!messageText && output.message.summary?.body) {
-        messageText = output.message.summary.body;
-      }
-
-      if (config.debug && messageText) {
-        console.log(`[context-routing] message text (${messageText.length}ch): ${messageText.slice(0, 200)}`);
-      }
-
+      // Content-based triggers from user's message parts
       if (messageText) {
-        resolver.resolveMessageTriggers(messageText).forEach((n) => skillNames.add(n));
+        const keywords = resolver.resolveMessageTriggers(messageText);
+        log(`[cr-debug]   keyword triggers: ${JSON.stringify(keywords)}`);
+        keywords.forEach((n) => skillNames.add(n));
 
-        // Path triggers — extract file paths from message, resolve extension
-        // and path-pattern skills synchronously (same turn, no pool needed).
         const paths = extractPaths(messageText);
+        log(`[cr-debug]   extracted paths: ${JSON.stringify(paths)}`);
         for (const p of paths) {
           resolver.resolveFileTriggers(p).forEach((n) => skillNames.add(n));
         }
+      } else {
+        log(`[cr-debug]   no message text`);
       }
 
       // Always-on skills
@@ -95,51 +162,71 @@ const plugin: Plugin = async ({ client, project, directory }: PluginInput) => {
       resolver.getAlwaysOnSkills().forEach((n) => skillNames.add(n));
 
       // Expand group names → member skills
-      const expanded = resolver.expandGroups(Array.from(skillNames));
-      expanded.forEach((n) => skillNames.add(n));
+      resolver.expandGroups(Array.from(skillNames)).forEach((n) => skillNames.add(n));
 
-      if (skillNames.size === 0) return;
+      log(`[cr-debug]   total resolved skill names: ${JSON.stringify(Array.from(skillNames))}`);
 
-      // Dedup against already-loaded skills
-      const toLoad = Array.from(skillNames).filter((n) => !mgr.hasSkill(n));
-      if (toLoad.length === 0) return;
-
-      // Load skills
-      const loaded: LoadedSkill[] = [];
-      for (const name of toLoad) {
-        const skill = loader.loadStaticSkill(name);
-        if (skill) loaded.push(skill);
-      }
-
-      if (loaded.length > 0) {
-        mgr.queueSkills(loaded, "chat.message");
-        if (config.showToasts) {
-          client.tui.showToast({
-            body: {
-              message: `Context routed: ${loaded.map((s) => s.name).join(", ")}`,
-              variant: "info",
-              duration: 3_000,
-            },
-          });
+      // ── Load new skills ───────────────────────────────────────────
+      if (skillNames.size > 0) {
+        const toLoad = Array.from(skillNames).filter((n) => !mgr.hasSkill(n));
+        log(`[cr-debug]   to load (not already in session): ${JSON.stringify(toLoad)}`);
+        if (toLoad.length > 0) {
+          const loaded: LoadedSkill[] = [];
+          for (const name of toLoad) {
+            const skill = loader.loadStaticSkill(name);
+            log(`[cr-debug]     loading "${name}": ${skill ? "found" : "NOT FOUND"}`);
+            if (skill) loaded.push(skill);
+          }
+          if (loaded.length > 0) {
+            mgr.queueSkills(loaded, "content.match");
+            if (config.showToasts) {
+              client.tui.showToast({
+                body: {
+                  message: `Context routed: ${loaded.map((s) => s.name).join(", ")}`,
+                  variant: "info",
+                  duration: 3_000,
+                },
+              });
+            }
+          }
         }
       }
+
+      // ── Flush pending (injection is handled by system.transform) ──
+      mgr.flushPending();
+      log(`[cr-debug]   active skills after flush: ${mgr.getActiveSkills().length}`);
     },
 
-    // ── System prompt injection ───────────────────────────────────────
+    // ── System prompt injection (preferred) ──────────────────────────
 
     "experimental.chat.system.transform": async (input, output) => {
-      if (!input.sessionID) return;
+      const sessionID = input.sessionID;
+      log(`[cr-debug] system.transform fired. sessionID=${sessionID}`);
 
-      const mgr = getOrCreateSession(input.sessionID, config.maxTokens, config.debug, config.skillTTL);
+      if (!sessionID) return;
 
-      // Flush pending → active
+      const mgr = getOrCreateSession(sessionID, config.maxTokens, config.debug, config.skillTTL);
+
+      // Flush any pending skills into active
       mgr.flushPending();
 
-      const formatted = mgr.getFormattedSkills();
-      if (!formatted) return;
+      const activeCount = mgr.getActiveSkills().length;
+      log(`[cr-debug]   active skills=${activeCount}, injectedThisTurn=${injectedThisTurn}`);
 
-      // IMPORTANT: Must mutate output.system in place
+      if (injectedThisTurn === "messages") {
+        log(`[cr-debug]   skipping — messages already injected`);
+        return;
+      }
+
+      const formatted = mgr.getFormattedSkills();
+      if (!formatted) {
+        log(`[cr-debug]   ⚠ getFormattedSkills() returned empty`);
+        return;
+      }
+
+      log(`[cr-debug]   ✅ injecting skills into system prompt (${formatted.length} chars)`);
       output.system.push(formatted);
+      injectedThisTurn = "system";
 
       if (config.debug) {
         const count = mgr.getActiveSkills().length;
@@ -174,7 +261,7 @@ const plugin: Plugin = async ({ client, project, directory }: PluginInput) => {
 
   } satisfies Hooks;
 
-  // Add custom tool conditionally (avoids spread with ternary issue)
+  // Add custom tool conditionally
   if (config.enableTools) {
     hooks.tool = {
       context_routes: {
@@ -187,6 +274,8 @@ const plugin: Plugin = async ({ client, project, directory }: PluginInput) => {
             config.debug,
             config.skillTTL,
           );
+
+          log(`[cr-debug] context_routes tool: sessionID=${context.sessionID}, active=${mgr.getActiveSkills().length}`);
 
           // ── Budget bar ───────────────────────────────────────────
           const budget = mgr.getBudgetStatus();
@@ -207,8 +296,7 @@ const plugin: Plugin = async ({ client, project, directory }: PluginInput) => {
           const tableSep   = "|-------|--------|----------|--------|---------|";
           const tableRows = active.map((s) => {
             const tok = Math.ceil(s.content.length / 4);
-            // Find trigger source from config
-            const triggerSrc = findSkillTrigger(s.name, config, context);
+            const triggerSrc = findSkillTrigger(s.name, scannedIndex);
             return `| ${s.name} | ${s.source} | ${s.priority} | ~${tok} | ${triggerSrc} |`;
           });
 
@@ -256,24 +344,17 @@ const plugin: Plugin = async ({ client, project, directory }: PluginInput) => {
 
 function findSkillTrigger(
   skillName: string,
-  cfg: PreloaderConfig,
-  context: any,
+  scannedIndex: ScannedSkillIndex,
 ): string {
-  // Check config trigger maps for which group catches this skill
-  for (const [ext, names] of Object.entries(cfg.fileTypeSkills)) {
-    if (names.includes(skillName)) return `file ${ext}`;
+  const meta = scannedIndex.get(skillName);
+  if (meta) {
+    if (meta.triggers.extensions?.length) return `file ${meta.triggers.extensions[0]}`;
+    if (meta.triggers.paths?.length) return "path pattern";
+    if (meta.triggers.agents?.length) return "agent match";
+    if (meta.triggers.keywords?.length) return "keyword";
+    if (meta.always) return "always-on";
   }
-  for (const [, names] of Object.entries(cfg.pathPatterns)) {
-    if (names.includes(skillName)) return "path pattern";
-  }
-  for (const [, names] of Object.entries(cfg.agentSkills)) {
-    if (names.includes(skillName)) return "agent match";
-  }
-  for (const [, names] of Object.entries(cfg.contentTriggers)) {
-    if (names.includes(skillName)) return "keyword";
-  }
-  if (cfg.skillSettings[skillName]?.always) return "always-on";
-  return "config";
+  return "frontmatter";
 }
 
 export default plugin;
@@ -282,12 +363,9 @@ export default plugin;
 
 /**
  * Extract file-path-like strings from message text.
- * Matches patterns with at least one path separator and a file extension.
- * Normalizes backslashes to forward slashes.
  */
 function extractPaths(text: string): string[] {
   const results = new Set<string>();
-  // Regex: optional Windows drive + path segments + filename.ext (2-6 char extension)
   const pathRegex = /(?:[a-zA-Z]:[\\/])?(?:[\w.-]+[\\/])+[\w.-]+\.(\w{2,6})/g;
   let match: RegExpExecArray | null;
   while ((match = pathRegex.exec(text)) !== null) {

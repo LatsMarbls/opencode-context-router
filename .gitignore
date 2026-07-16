@@ -6,3 +6,4 @@ dist/
 .codebase-index
 .codebase-index-store/
 .opencode/
+debug.log

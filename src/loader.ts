@@ -1,4 +1,4 @@
-import { readFileSync, existsSync } from "node:fs";
+import { readFileSync, readdirSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import type { PreloaderConfig } from "./config.js";
 import { resolveSkillPath } from "./config.js";
@@ -46,12 +46,41 @@ export class SkillLoader {
 
     // Try each location template
     for (const tmpl of this.config.skillLocations) {
+      // ── Wildcard expansion ────────────────────────────────────────────────
+      // Templates with * (e.g. {user}/skills/*/{name}/SKILL.md) need directory
+      // scan to find matching subdirectories.
+      if (tmpl.includes("*")) {
+        const [before, after] = tmpl.split("*");
+        const parentTmpl = before;            // e.g. {user}/skills/
+        const childTmpl  = after;             // e.g. /{name}/SKILL.md
+        // Resolve {project}/{user}/{name} in parent path, then scan subdirs
+        const parentDir = resolveSkillPath(parentTmpl, this.projectDir, name);
+        let subDirs: string[];
+        try {
+          subDirs = readdirSync(parentDir, { withFileTypes: true })
+            .filter(d => d.isDirectory())
+            .map(d => d.name);
+        } catch {
+          continue; // parent doesn't exist, skip this template
+        }
+        for (const sub of subDirs) {
+          const absPath = join(parentDir, sub, childTmpl.replace(/\{name\}/g, name));
+          if (!existsSync(absPath)) continue;
+          const content = this.readFile(absPath);
+          if (!content) continue;
+          if (this.config.debug) {
+            console.log(`[context-routing] Loaded skill "${name}" from ${absPath}`);
+          }
+          return { name, content, source: "static-file", priority };
+        }
+        continue;
+      }
+
+      // ── Direct path ───────────────────────────────────────────────────────
       const absPath = resolveSkillPath(tmpl, this.projectDir, name);
       if (!existsSync(absPath)) continue;
-
       const content = this.readFile(absPath);
       if (!content) continue;
-
       if (this.config.debug) {
         console.log(`[context-routing] Loaded skill "${name}" from ${absPath}`);
       }

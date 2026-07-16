@@ -1,12 +1,3 @@
-// ─────────────────────────────────────────────────────────────────────────────
-// Context Router — configuration
-// Place in project root at: .opencode/context-router.jsonc
-// Or user-global at:        ~/.config/opencode/context-router.jsonc
-// Plugin default at:        ~/.config/opencode/plugins/context-routing/context-router.jsonc
-//
-// Later files override earlier ones (project > user > plugin default).
-// ─────────────────────────────────────────────────────────────────────────────
-
 {
   // ── Skill file locations (order = search priority) ────────────────────────
   // {project} = project root directory
@@ -17,114 +8,20 @@
     "{project}/.opencode/skills/{name}/SKILL.md",
     "{project}/.opencode/agent/{name}.md",
     "{user}/skills/{name}/SKILL.md",
+    "{user}/skills/*/{name}/SKILL.md",
     "{user}/agent/{name}.md"
   ],
-
-  // ── Always-loaded skills ──────────────────────────────────────────────────
-  // These skill files inject every turn regardless of triggers.
-  // Replace with your own conventions (e.g. "team-rules", "style-guide").
-  "skills": [],
-
-  // ── File extension triggers ───────────────────────────────────────────────
-  // When editing a file with this extension, load these skills.
-  // Keys: file extension. Values: array of skill names.
-  "fileTypeSkills": {
-    ".php": ["php-conventions"],
-    ".vue": ["vue-conventions"],
-    ".ts": ["ts-conventions"]
-  },
-
-  // ── Agent name triggers ───────────────────────────────────────────────────
-  // When a specific OpenCode agent is active, load these skills.
-  // Keys: agent name (or glob pattern). Values: array of skill names.
-  "agentSkills": {
-    "coder-lite": ["backend-conventions", "frontend-conventions"],
-    "debugger-lite": ["debug-rules"],
-    "reviewer-lite": ["review-rules"]
-  },
-
-  // ── Path pattern triggers ─────────────────────────────────────────────────
-  // When the active file path matches a glob pattern, load these skills.
-  // Patterns relative to project root.
-  "pathPatterns": {
-    "src/Controllers/**": ["controller-rules"],
-    "src/Models/**": ["model-rules"],
-    "src/Services/**": ["service-rules"],
-    "database/migrations/**": ["migration-rules"],
-    "src/components/**": ["component-rules"]
-  },
-
-  // ── Keyword / content triggers ────────────────────────────────────────────
-  // When the user's message contains these keywords (case-insensitive),
-  // load the associated skills.
-  "contentTriggers": {
-    "migration": ["migration-rules"],
-    "controller": ["controller-rules"],
-    "model": ["model-rules"],
-    "vue component": ["vue-conventions"]
-  },
-
-  // ── Named groups ──────────────────────────────────────────────────────────
-  // Reference groups in other trigger maps or reuse across configs.
-  "groups": {
-    "full-stack": ["backend-conventions", "frontend-conventions", "crud-rules"],
-    "frontend-only": ["vue-conventions", "component-rules", "design-tokens"],
-    "backend-only": ["php-conventions", "controller-rules", "model-rules", "migration-rules"]
-  },
-
-  // ── Per-skill settings ────────────────────────────────────────────────────
-  // Override priority, always-on, or summary mode per skill.
-  // "priority": higher number = survives token budget cuts first.
-  // "always": true = always load regardless of triggers.
-  // "useSummary": true = inject LLM-generated summary instead of full content.
-  "skillSettings": {
-    "migration-rules": { "priority": 10, "always": false },
-    "backend-conventions": { "priority": 8, "always": true },
-    "frontend-conventions": { "priority": 8, "always": true }
-  },
-
-  // ── Priority map (global fallback) ────────────────────────────────────────
-  // Higher number = higher priority. Used when skillSettings doesn't define one.
-  // Default priority if unlisted: 5
-  "priority": {
-    "migration-rules": 10,
-    "controller-rules": 7,
-    "model-rules": 7,
-    "service-rules": 7,
-    "vue-conventions": 6,
-    "php-conventions": 5,
-    "debug-rules": 5,
-    "review-rules": 5,
-    "design-tokens": 3
-  },
 
   // ── Directories to skip when matching path triggers ───────────────────────
   "triggerIgnoreTags": ["node_modules", ".git", "vendor", "dist", ".next", "build"],
 
-  // ── Injection method ──────────────────────────────────────────────────────
-  // "systemPrompt" — inject into system prompt (recommended, default).
-  // "chatMessage"  — inject as additional user message.
-  "injectionMethod": "systemPrompt",
+  // ── Accumulate skills across turns ────────────────────────────────────────
+  // true: skills persist across turns (default). false: fresh each turn.
+  "accumulateSkills": true,
 
-  // ── Token budget ──────────────────────────────────────────────────────────
-  // Skills sorted by priority. When estimated tokens exceed this,
-  // lowest-priority skills are dropped from injection.
-  "maxTokens": 8000,
+  // ── Show TUI toast on skill load/unload ───────────────────────────────────
+  "showToasts": true,
 
-  // ── Time-to-live settings ──────────────────────────────────────────────────
-  // Skills older than this are evicted automatically. 0 = no TTL eviction.
-  // Per-skill override via skillSettings (e.g. {"my-skill": {"skillTTL": 0}})
-  "skillTTL": 600000,       // 10 min default (ms)
-  "cacheFileTTL": 60000,    // File cache refresh interval (ms)
-
-  // ── Feature flags ─────────────────────────────────────────────────────────
-  "scannerEnabled": true,       // Auto-discover skills from YAML frontmatter (default: true)
-  "useSummaries": false,        // [STUB] Use LLM summaries instead of full skill content
-  "useMinification": false,     // [STUB] Strip comments/whitespace from skill markdown
-  "showToasts": true,           // Show TUI toast on skill load/unload
-  "enableTools": true,          // Expose /context_routes in-session command
-  "persistAfterCompaction": true,  // Survive OpenCode context trimming
-  "accumulateSkills": true,     // Accumulate across turns (true). When false,
-                                // each turn gets only its own triggered skills.
-  "debug": false                // Verbose console logging
+  // ── Verbose console logging ──────────────────────────────────────────────
+  "debug": false
 }
