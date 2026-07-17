@@ -10,12 +10,13 @@
  *   context-routing help      This message
  */
 
-import { writeFileSync, mkdirSync } from "node:fs";
+import { writeFileSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
-import { homedir } from "node:os";
-import { loadConfig } from "./config";
+import { homedir, tmpdir } from "node:os";
+import { loadConfig, type PreloaderConfig } from "./config";
 import { SkillLoader } from "./loader";
 import { scanSkillFiles, type ScannedSkillIndex, type ScannedSkillMeta } from "./scanner";
+import { setCachePathForTesting } from "./scanCache";
 // ── Resolve config ──────────────────────────────────────────────────────────
 
 const CWD = process.cwd();
@@ -297,6 +298,81 @@ function cmdCache(config: any): string {
   return lines.join("\n");
 }
 
+function cmdBenchmark(): string {
+  const lines: string[] = [];
+  lines.push("\n\x1b[1mScanner Benchmark (50 synthetic skills)\x1b[0m");
+  lines.push("━".repeat(48));
+
+  // Create 50 synthetic skill files in a temp dir
+  const tmpDir = mkdtempSync(join(tmpdir(), "context-routing-bench-"));
+  const cacheDir = join(tmpDir, ".cache");
+  mkdirSync(cacheDir, { recursive: true });
+  setCachePathForTesting(cacheDir);
+
+  // Create 50 skill files
+  const skillDir = join(tmpDir, ".opencode", "skills");
+  for (let i = 0; i < 50; i++) {
+    const dir = join(skillDir, `skill-${i}`);
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(
+      join(dir, "SKILL.md"),
+      `---
+name: skill-${i}
+triggers:
+  extensions: [".t${i}"]
+  keywords: ["keyword-${i}"]
+priority: ${i}
+---
+
+# Skill ${i}
+Some content here that would normally take a moment to parse.
+`,
+      "utf-8",
+    );
+  }
+
+  const config: PreloaderConfig = {
+    skills: [], fileTypeSkills: {}, agentSkills: {}, pathPatterns: {},
+    contentTriggers: {}, skillSettings: {},
+    skillLocations: [`${tmpDir}/.opencode/skills/{name}/SKILL.md`],
+    scannerEnabled: true, triggerIgnoreTags: [],
+    injectionMethod: "systemPrompt", maxTokens: 8000,
+    useSummaries: false, useMinification: false, showToasts: false,
+    enableTools: false, analytics: false, persistAfterCompaction: true,
+    accumulateSkills: true, debug: false, priority: {},
+    skillTTL: 600000, cacheFileTTL: 60000,
+  };
+
+  // Cold scan
+  const t1 = performance.now();
+  const idx1 = scanSkillFiles(config, tmpDir);
+  const t2 = performance.now();
+  const coldMs = t2 - t1;
+
+  // Warm scan
+  const t3 = performance.now();
+  const idx2 = scanSkillFiles(config, tmpDir);
+  const t4 = performance.now();
+  const warmMs = t4 - t3;
+
+  const speedup = coldMs / Math.max(warmMs, 0.01);
+
+  lines.push(`  Skills created:  50`);
+  lines.push("");
+  lines.push(`  \x1b[33mCold cache:\x1b[0m  ${coldMs.toFixed(1)}ms  (${idx1.size} skills scanned from disk)`);
+  lines.push(`  \x1b[32mWarm cache:\x1b[0m  ${warmMs.toFixed(1)}ms  (${idx2.size} skills, mtime+size check only)`);
+  lines.push("");
+  lines.push(`  Speedup:  \x1b[1m${speedup.toFixed(1)}x\x1b[0m`);
+  lines.push("");
+  lines.push("  \x1b[90mCache file: " + join(cacheDir, "scan-cache.json") + "\x1b[0m");
+
+  // Cleanup
+  try { rmSync(tmpDir, { recursive: true, force: true }); } catch { /* ignore */ }
+  setCachePathForTesting(null);
+
+  return lines.join("\n");
+}
+
 function cmdReload(): void {
   const signalDir = join(homedir(), ".config", "opencode", "plugins", "context-routing");
   const signalFile = join(signalDir, ".reload-signal");
@@ -326,6 +402,8 @@ function cmdHelp(): string {
   context-routing reload    Signal the running plugin to hot-reload
                             (config + global skills). Use after editing
                             files in ~/.config/opencode/.
+  context-routing benchmark Measure scanner cold vs warm cache perf
+                            (creates 50 synthetic skills, cleans up)
   context-routing help      This message
 `;
 }
@@ -363,6 +441,9 @@ function main() {
       break;
     case "reload":
       cmdReload();
+      break;
+    case "benchmark":
+      console.log(cmdBenchmark());
       break;
     default:
       console.log(cmdMatrix(config, scannedIndex));

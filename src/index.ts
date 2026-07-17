@@ -31,6 +31,7 @@ import { trackSessionEvent } from "./analytics.js";
 import { appendFileSync, existsSync, unlinkSync } from "fs";
 import { join } from "path";
 import { homedir } from "os";
+import { loadScanCache } from "./scanCache.js";
 
 // ── File Logger ─────────────────────────────────────────────────────────────
 // Writes diagnostics to ~/.config/opencode/plugins/context-routing/debug.log
@@ -385,9 +386,9 @@ const plugin: Plugin = async ({ client, project, directory }: PluginInput) => {
           const tableHeader = "| Skill | Source | Priority | Tokens | Trigger |";
           const tableSep   = "|-------|--------|----------|--------|---------|";
           const tableRows = active.map((s) => {
-            const tok = Math.ceil(s.content.length / 4);
+            const tok = mgr.estimateTokens(s.content);
             const triggerSrc = findSkillTrigger(s.name, scannedIndex);
-            return `| ${s.name} | ${s.source} | ${s.priority} | ~${tok} | ${triggerSrc} |`;
+            return `| ${s.name} | ${s.source} | ${s.priority} | ${tok} | ${triggerSrc} |`;
           });
 
           // ── Per-extension grouping ───────────────────────────────
@@ -406,9 +407,12 @@ const plugin: Plugin = async ({ client, project, directory }: PluginInput) => {
           if (budget.dropped.length > 0) {
             droppedLines.push("\n#### Dropped (budget exceeded)");
             for (const d of budget.dropped) {
-              droppedLines.push(`- ${d.name} (prio ${d.priority}, ~${d.tokens} tok)`);
+              droppedLines.push(`- ${d.name} (prio ${d.priority}, ${d.tokens} tok)`);
             }
           }
+
+          // ── Scan cache section ──────────────────────────────────
+          const cacheInfo = getScanCacheSummary(projectDir, scannedIndex, config.skillLocations);
 
           return [
             `## Context Routes`,
@@ -421,6 +425,9 @@ const plugin: Plugin = async ({ client, project, directory }: PluginInput) => {
             "",
             ...(extLines.length > 0 ? ["### Per Extension", ...extLines, ""] : []),
             ...droppedLines,
+            "",
+            "### Scan Cache",
+            cacheInfo,
           ].join("\n");
         },
       },
@@ -445,6 +452,37 @@ function findSkillTrigger(
     if (meta.always) return "always-on";
   }
   return "frontmatter";
+}
+
+/**
+ * Render a one-line scan cache summary for the in-session tool dashboard.
+ * Shows: skill count, cache file location, in-sync status.
+ */
+function getScanCacheSummary(
+  projectDir: string,
+  scannedIndex: ScannedSkillIndex,
+  currentLocations: string[],
+): string {
+  const cache = loadScanCache();
+  const entry = cache?.projects[projectDir];
+  const totalSkills = scannedIndex.size;
+  const lines: string[] = [];
+
+  lines.push(`- **Skills indexed:** ${totalSkills}`);
+
+  if (entry) {
+    const cachedCount = Object.keys(entry.entries).length;
+    const locationMatch = JSON.stringify(entry.skillLocations) === JSON.stringify(currentLocations);
+    const status = locationMatch ? "✓ in sync" : "⚠ locations changed";
+    lines.push(`- **Cache:** ${cachedCount} entries · ${status}`);
+  } else {
+    lines.push(`- **Cache:** (no entry for this project — full scan on next reload)`);
+  }
+
+  lines.push(`- **Path:** \`~/.config/opencode/plugins/context-routing/scan-cache.json\``);
+  lines.push(`- **Tip:** run \`npx context-routing benchmark\` to verify cache perf`);
+
+  return lines.join("\n");
 }
 
 export const server = plugin;

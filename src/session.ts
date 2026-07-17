@@ -314,8 +314,10 @@ export class SessionManager {
    * Why cl100k_base: most modern LLM families (GPT-4, Claude, Llama3) have
    * similar token-per-char ratios for English/code, so the budget estimate
    * stays within ~10% across families.
+   *
+   * Public so the in-session tool can display accurate per-skill token counts.
    */
-  private estimateTokens(text: string): number {
+  estimateTokens(text: string): number {
     try {
       return encode(text).length;
     } catch {
