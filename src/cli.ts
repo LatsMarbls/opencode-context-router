@@ -6,13 +6,17 @@
  *   context-routing matrix    Same, full trigger matrix
  *   context-routing check <file>   Preview which skills fire for a file
  *   context-routing config    Show effective config
+ *   context-routing reload    Signal the running plugin to hot-reload
  *   context-routing help      This message
  */
 
-import { loadConfig } from "./config";
+import { writeFileSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { join } from "node:path";
+import { homedir, tmpdir } from "node:os";
+import { loadConfig, type PreloaderConfig } from "./config";
 import { SkillLoader } from "./loader";
 import { scanSkillFiles, type ScannedSkillIndex, type ScannedSkillMeta } from "./scanner";
-
+import { setCachePathForTesting } from "./scanCache";
 // ── Resolve config ──────────────────────────────────────────────────────────
 
 const CWD = process.cwd();
@@ -175,8 +179,18 @@ function cmdCheck(filePath: string, config: any, scannedIndex?: ScannedSkillInde
   const ext = filePath.split(".").pop()?.toLowerCase() ?? "";
   const fileName = filePath.split(/[\\/]/).pop() ?? "";
 
+  // Honor triggerIgnoreTags the same way the runtime does.
+  // Matches on path SEGMENTS only (not substrings) — "dist" doesn't match
+  // "src/distribution/Foo.php" but DOES match "dist/Foo.js".
+  const ignoreTags = (config as any).triggerIgnoreTags ?? [];
+  const segments = filePath.replace(/\\/g, "/").toLowerCase().split("/");
+  const ignored = ignoreTags.some((tag: string) => segments.includes(tag.toLowerCase()));
+
   lines.push(`\n\x1b[1mChecking: ${filePath}\x1b[0m`);
   lines.push(`  extension: \x1b[33m.${ext}\x1b[0m`);
+  if (ignored) {
+    lines.push(`  \x1b[33m⚠\x1b[0m  Path is in triggerIgnoreTags — runtime would skip this file.`);
+  }
   lines.push("");
 
   const matched: string[] = [];
@@ -186,6 +200,7 @@ function cmdCheck(filePath: string, config: any, scannedIndex?: ScannedSkillInde
   for (const [fe, names] of Object.entries((config as any).fileTypeSkills ?? {})) {
     if (fe === `.${ext}` || fe === ext) {
       for (const n of names as string[]) {
+        if (ignored) continue;
         matched.push(n);
         reasons.push(`extension .${ext}`);
       }
@@ -199,6 +214,7 @@ function cmdCheck(filePath: string, config: any, scannedIndex?: ScannedSkillInde
     );
     if (re.test(filePath) || re.test(fileName)) {
       for (const n of names as string[]) {
+        if (ignored) continue;
         matched.push(n);
         reasons.push(`path ${pat}`);
       }
@@ -209,6 +225,7 @@ function cmdCheck(filePath: string, config: any, scannedIndex?: ScannedSkillInde
   if (scannedIndex) {
     for (const [name, meta] of scannedIndex) {
       if (meta.triggers.extensions?.includes(`.${ext}`) || meta.triggers.extensions?.includes(ext)) {
+        if (ignored) continue;
         matched.push(name);
         reasons.push(`scanned extension .${ext}`);
       }
@@ -281,6 +298,97 @@ function cmdCache(config: any): string {
   return lines.join("\n");
 }
 
+function cmdBenchmark(): string {
+  const lines: string[] = [];
+  lines.push("\n\x1b[1mScanner Benchmark (50 synthetic skills)\x1b[0m");
+  lines.push("━".repeat(48));
+
+  // Create 50 synthetic skill files in a temp dir
+  const tmpDir = mkdtempSync(join(tmpdir(), "context-routing-bench-"));
+  const cacheDir = join(tmpDir, ".cache");
+  mkdirSync(cacheDir, { recursive: true });
+  setCachePathForTesting(cacheDir);
+
+  // Create 50 skill files
+  const skillDir = join(tmpDir, ".opencode", "skills");
+  for (let i = 0; i < 50; i++) {
+    const dir = join(skillDir, `skill-${i}`);
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(
+      join(dir, "SKILL.md"),
+      `---
+name: skill-${i}
+triggers:
+  extensions: [".t${i}"]
+  keywords: ["keyword-${i}"]
+priority: ${i}
+---
+
+# Skill ${i}
+Some content here that would normally take a moment to parse.
+`,
+      "utf-8",
+    );
+  }
+
+  const config: PreloaderConfig = {
+    skills: [], fileTypeSkills: {}, agentSkills: {}, pathPatterns: {},
+    contentTriggers: {}, skillSettings: {},
+    skillLocations: [`${tmpDir}/.opencode/skills/{name}/SKILL.md`],
+    scannerEnabled: true, triggerIgnoreTags: [],
+    injectionMethod: "systemPrompt", maxTokens: 8000,
+    useSummaries: false, useMinification: false, showToasts: false,
+    enableTools: false, analytics: false, persistAfterCompaction: true,
+    accumulateSkills: true, debug: false, priority: {},
+    skillTTL: 600000, cacheFileTTL: 60000,
+  };
+
+  // Cold scan
+  const t1 = performance.now();
+  const idx1 = scanSkillFiles(config, tmpDir);
+  const t2 = performance.now();
+  const coldMs = t2 - t1;
+
+  // Warm scan
+  const t3 = performance.now();
+  const idx2 = scanSkillFiles(config, tmpDir);
+  const t4 = performance.now();
+  const warmMs = t4 - t3;
+
+  const speedup = coldMs / Math.max(warmMs, 0.01);
+
+  lines.push(`  Skills created:  50`);
+  lines.push("");
+  lines.push(`  \x1b[33mCold cache:\x1b[0m  ${coldMs.toFixed(1)}ms  (${idx1.size} skills scanned from disk)`);
+  lines.push(`  \x1b[32mWarm cache:\x1b[0m  ${warmMs.toFixed(1)}ms  (${idx2.size} skills, mtime+size check only)`);
+  lines.push("");
+  lines.push(`  Speedup:  \x1b[1m${speedup.toFixed(1)}x\x1b[0m`);
+  lines.push("");
+  lines.push("  \x1b[90mCache file: " + join(cacheDir, "scan-cache.json") + "\x1b[0m");
+
+  // Cleanup
+  try { rmSync(tmpDir, { recursive: true, force: true }); } catch { /* ignore */ }
+  setCachePathForTesting(null);
+
+  return lines.join("\n");
+}
+
+function cmdReload(): void {
+  const signalDir = join(homedir(), ".config", "opencode", "plugins", "context-routing");
+  const signalFile = join(signalDir, ".reload-signal");
+  try {
+    mkdirSync(signalDir, { recursive: true });
+    writeFileSync(signalFile, new Date().toISOString(), "utf-8");
+    console.log("\x1b[32m✓\x1b[0m Reload signal sent.");
+    console.log(`  Signal file: ${signalFile}`);
+    console.log("  The running plugin will pick this up on the next turn and reload config + skills.");
+    console.log("  (If no turn happens soon, just send any message to OpenCode.)");
+  } catch (err) {
+    console.error(`\x1b[31m✗\x1b[0m Failed to write reload signal: ${err instanceof Error ? err.message : String(err)}`);
+    process.exit(1);
+  }
+}
+
 function cmdHelp(): string {
   return `
 \x1b[1mcontext-routing\x1b[0m — OpenCode skill trigger visualizer
@@ -291,6 +399,11 @@ function cmdHelp(): string {
   context-routing check <file>  Preview which skills fire for a file
   context-routing config    Show effective config values
   context-routing cache     Show skill file cache stats
+  context-routing reload    Signal the running plugin to hot-reload
+                            (config + global skills). Use after editing
+                            files in ~/.config/opencode/.
+  context-routing benchmark Measure scanner cold vs warm cache perf
+                            (creates 50 synthetic skills, cleans up)
   context-routing help      This message
 `;
 }
@@ -325,6 +438,12 @@ function main() {
       break;
     case "cache":
       console.log(cmdCache(config));
+      break;
+    case "reload":
+      cmdReload();
+      break;
+    case "benchmark":
+      console.log(cmdBenchmark());
       break;
     default:
       console.log(cmdMatrix(config, scannedIndex));

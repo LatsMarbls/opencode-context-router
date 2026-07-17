@@ -32,9 +32,6 @@ export interface PreloaderConfig {
   /** Skills triggered by keyword/pattern in user messages */
   contentTriggers: Record<string, string[]>;
 
-  /** Named groups of skills for reuse */
-  groups: Record<string, string[]>;
-
   /** Per-skill overrides */
   skillSettings: Record<string, SkillSettings>;
 
@@ -85,7 +82,9 @@ export interface PreloaderConfig {
   priority: Record<string, number>;
 
   /** Default TTL for loaded skills (ms). Skills evicted after this time.
-   *  0 = no TTL eviction (load once, never drop). Default 600000 (10 min). */
+   *  WARNING: 0 means "never evict" (skills live for session lifetime),
+   *  NOT "instant expiry". If you want skills to drop after each turn,
+   *  set accumulateSkills: false instead. Default 600000 (10 min). */
   skillTTL: number;
 
   /** File cache TTL (ms). How long a skill file read is cached before
@@ -101,7 +100,6 @@ export const DEFAULT_CONFIG: PreloaderConfig = {
   agentSkills: {},
   pathPatterns: {},
   contentTriggers: {},
-  groups: {},
   skillSettings: {},
   skillLocations: [
     // Check project-local first, then user-global

@@ -93,13 +93,6 @@ export class SkillLoader {
   }
 
   /**
-   * Resolve a named group into its constituent skill names.
-   */
-  resolveGroup(name: string): string[] {
-    return this.config.groups[name] ?? [];
-  }
-
-  /**
    * Get all skills that have always:true in their settings.
    */
   getAlwaysOnSkills(): string[] {
@@ -119,6 +112,21 @@ export class SkillLoader {
     };
   }
 
+  /**
+   * Invalidate a single cached file (used when a skill file changes).
+   * Next read will re-read from disk.
+   */
+  invalidateCache(absPath: string): void {
+    this.fileCache.delete(absPath);
+  }
+
+  /**
+   * Invalidate all cached files (used on full reload).
+   */
+  invalidateAll(): void {
+    this.fileCache.clear();
+  }
+
   // ── Private ──────────────────────────────────────────────────────────────
 
   private readFile(absPath: string): string | null {
@@ -134,7 +142,11 @@ export class SkillLoader {
       const content = readFileSync(absPath, "utf-8");
       this.fileCache.set(absPath, { content, loadedAt: now });
       return content;
-    } catch {
+    } catch (err) {
+      if (this.config.debug) {
+        const reason = err instanceof Error ? err.message : String(err);
+        console.error(`[context-routing] Failed to read skill at ${absPath}: ${reason}`);
+      }
       return null;
     }
   }

@@ -126,6 +126,38 @@ export class Resolver {
   }
 
   /**
+   * Get all known group names from scanned skill frontmatter.
+   */
+  getAllGroupNames(): string[] {
+    const names = new Set<string>();
+    for (const meta of this.scannedIndex.values()) {
+      for (const g of meta.groups ?? []) {
+        names.add(g);
+      }
+    }
+    return Array.from(names);
+  }
+
+  /**
+   * Check if message text contains any group name as a whole word.
+   * Returns matching group names — these will be passed to expandGroups
+   * to load all member skills of that group.
+   *
+   * Example: "load all backend-stack rules" → ["backend-stack"]
+   * Unlike resolveMessageTriggers, this triggers GROUP expansion rather
+   * than loading a single skill.
+   */
+  resolveGroupNameTriggers(messageText: string): string[] {
+    const matched: string[] = [];
+    for (const groupName of this.getAllGroupNames()) {
+      if (matchesWholeWord(messageText, groupName)) {
+        matched.push(groupName);
+      }
+    }
+    return matched;
+  }
+
+  /**
    * Get all skill names that should always be loaded.
    * Merges config always-on + scanned always-on.
    */
@@ -179,17 +211,33 @@ export class Resolver {
   }
 
   /**
-   * Expand skill names through group resolution.
-   * Two directions:
-   *   1. Name is a config group key → expand to all member skills
-   *   2. Name is a skill in a group → expand to all siblings in that group
+   * Expand skill names through group membership.
    *
-   * NOTE: If a skill name matches a config group name, the group wins.
-   * E.g., a skill named "laravel-stack" won't load if a group "laravel-stack" exists.
-   * Recurses up to 3 passes to handle nested groups (A→B→C).
+   * Groups are defined SOLELY by frontmatter. A group "laravel-stack" exists
+   * iff at least one skill's frontmatter `groups: ["laravel-stack", ...]`.
+   *
+   * Two directions:
+   *   1. Name is a group name → load all skills with that group in frontmatter
+   *   2. Name is a skill with `groups: [...]` → load all siblings (skills sharing
+   *      any of those group names)
+   *
+   * Recurses up to 3 passes to handle nested groups (A → B → C).
+   *
+   * Note: "always-on" loading is handled separately via `getAlwaysOnSkills()`,
+   * not via a magic "always" group.
    */
   expandGroups(skillNames: string[]): string[] {
     const result = new Set<string>();
+
+    // Build reverse map: groupName → [skillName, ...] from frontmatter
+    const groupToMembers = new Map<string, string[]>();
+    for (const [skillName, meta] of this.scannedIndex) {
+      for (const group of meta.groups ?? []) {
+        const members = groupToMembers.get(group) ?? [];
+        members.push(skillName);
+        groupToMembers.set(group, members);
+      }
+    }
 
     // Seed with original names
     skillNames.forEach(n => result.add(n));
@@ -200,26 +248,29 @@ export class Resolver {
       let added = false;
 
       for (const name of toExpand) {
-        // 1. Is this name a config group key?
-        const configGroup = this.config.groups[name];
-        if (configGroup) {
-          configGroup.forEach(n => { if (!result.has(n)) added = true; result.add(n); });
+        // 1. Is this name a group key? Load all members.
+        const members = groupToMembers.get(name);
+        if (members) {
+          for (const m of members) {
+            if (!result.has(m)) { result.add(m); added = true; }
+          }
           continue;
         }
 
-        // 2. Does this skill belong to any groups (from frontmatter)?
+        // 2. Is this a skill with group membership? Load siblings.
         const groups = this.skillToGroups.get(name);
         if (groups) {
           for (const groupName of groups) {
-            const members = this.config.groups[groupName];
-            if (members) {
-              members.forEach(n => { if (!result.has(n)) added = true; result.add(n); });
+            const siblings = groupToMembers.get(groupName);
+            if (siblings) {
+              for (const sib of siblings) {
+                if (!result.has(sib)) { result.add(sib); added = true; }
+              }
             }
           }
         }
       }
 
-      // No new names added → converged
       if (!added) break;
     }
 
@@ -293,11 +344,14 @@ function buildGlobRegex(pattern: string): RegExp | null {
 
 /**
  * Check if a file path should be ignored (node_modules, vendor, etc.)
+ * Matches on full path segments only — prevents "dist" from matching
+ * "src/distribution/services/EmailService.php".
  */
 function shouldIgnorePath(absPath: string, ignoreTags: string[]): boolean {
   if (ignoreTags.length === 0) return false;
   const normalized = absPath.replace(/\\/g, "/").toLowerCase();
-  return ignoreTags.some(tag => normalized.includes(tag.toLowerCase()));
+  const segments = normalized.split("/");
+  return ignoreTags.some(tag => segments.includes(tag.toLowerCase()));
 }
 
 /**
@@ -308,6 +362,7 @@ function shouldIgnorePath(absPath: string, ignoreTags: string[]): boolean {
  *   - "controller" does NOT match "controllers"
  *   - "c++" matches "write c++ code" (regex special chars escaped)
  *   - Multi-word phrases like "vue component"
+ *   - "vue" DOES match "vue3" (digit suffix allowed for version-aware keywords)
  * Case-insensitive.
  *
  * Uses word-boundary detection with explicit char-class checks for hyphen
@@ -318,9 +373,10 @@ function matchesWholeWord(text: string, keyword: string): boolean {
   // Escape regex special chars so literal keywords don't break the regex
   const escaped = keyword.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   try {
-    // Use word boundary detection without lookbehind.
-    // \b handles most cases; add explicit char-class checks for hyphen boundaries.
-    const re = new RegExp(`(?:^|[^\\w-])${escaped}(?:[^\\w-]|$)`, "i");
+    // Boundary: (start | non-word-non-hyphen) before.
+    // Boundary: after must be (non-word-non-hyphen | end | digits+end).
+    // The trailing \d* allows version-like suffixes (vue3, swift5, react18).
+    const re = new RegExp(`(?:^|[^\\w-])${escaped}\\d*(?:[^\\w-]|$)`, "i");
     return re.test(text);
   } catch {
     return false;

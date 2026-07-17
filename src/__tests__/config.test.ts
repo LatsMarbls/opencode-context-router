@@ -26,6 +26,9 @@ describe('config', () => {
       '/project',
       'test',
     );
-    expect(result).toContain('.config/opencode/skills/test/SKILL.md');
+    // Cross-platform: homedir() returns `/home/user` on Linux/macOS but
+    // `C:\Users\foo` on Windows. Match the meaningful suffix only,
+    // allowing either `/` or `\` as the path separator.
+    expect(result).toMatch(/\.config[\\/]opencode[\\/]skills[\\/]test[\\/]SKILL\.md$/);
   });
 });

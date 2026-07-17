@@ -9,7 +9,6 @@ const baseConfig: PreloaderConfig = {
   agentSkills: { 'coder-lite': ['coding-rules'] },
   pathPatterns: { 'src/Models/**': ['model-rules'], 'src/Controllers/**': ['controller-rules'] },
   contentTriggers: { 'migration': ['migration-rules'], 'controller': ['controller-rules'] },
-  groups: { 'laravel-stack': ['php-conventions', 'migration-rules', 'model-rules'] },
   skillSettings: {},
   skillLocations: [],
   scannerEnabled: false,
@@ -28,13 +27,6 @@ const baseConfig: PreloaderConfig = {
   skillTTL: 600000,
   cacheFileTTL: 60000,
 };
-
-/** Minimal scanned index for group resolution tests */
-const scannedIndex: ScannedSkillIndex = new Map([
-  ['migration-rules', { name: 'migration-rules', filePath: '/fake', triggers: {}, groups: ['laravel-stack'] }],
-  ['php-conventions', { name: 'php-conventions', filePath: '/fake', triggers: {}, groups: ['laravel-stack'] }],
-  ['model-rules', { name: 'model-rules', filePath: '/fake', triggers: {}, groups: ['laravel-stack'] }],
-]);
 
 describe('Resolver', () => {
   describe('resolveFileTriggers', () => {
@@ -58,6 +50,16 @@ describe('Resolver', () => {
       const resolver = new Resolver(baseConfig);
       expect(resolver.resolveFileTriggers('src\\Models\\User.php')).toContain('model-rules');
     });
+
+    it('matches ignore tags on path segments, not substrings (dist vs distribution)', () => {
+      const configWithDist = { ...baseConfig, triggerIgnoreTags: ['dist'] };
+      const resolver = new Resolver(configWithDist);
+      // "src/distribution/..." contains "dist" as substring, but "distribution" is a different segment
+      // and should NOT be ignored
+      expect(resolver.resolveFileTriggers('src/distribution/services/EmailService.php')).toContain('php-conventions');
+      // But actual dist/ directory SHOULD be ignored
+      expect(resolver.resolveFileTriggers('dist/bundle.js')).toEqual([]);
+    });
   });
 
   describe('resolveMessageTriggers', () => {
@@ -75,6 +77,20 @@ describe('Resolver', () => {
       const resolver = new Resolver(baseConfig);
       expect(resolver.resolveMessageTriggers('Create a Migration')).toContain('migration-rules');
     });
+
+    it('matches digit suffix (vue → vue3, swift → swift5)', () => {
+      const config = { ...baseConfig, contentTriggers: { vue: ['vue-rules'], swift: ['swift-rules'] } };
+      const resolver = new Resolver(config);
+      expect(resolver.resolveMessageTriggers('using vue3')).toContain('vue-rules');
+      expect(resolver.resolveMessageTriggers('writing swift5 code')).toContain('swift-rules');
+    });
+
+    it('does NOT match if letters follow the keyword', () => {
+      const config = { ...baseConfig, contentTriggers: { vue: ['vue-rules'] } };
+      const resolver = new Resolver(config);
+      // "vuex" has 'x' (letter) after "vue" — must NOT match
+      expect(resolver.resolveMessageTriggers('using vuex')).not.toContain('vue-rules');
+    });
   });
 
   describe('resolveAgentTriggers', () => {
@@ -89,27 +105,47 @@ describe('Resolver', () => {
     });
   });
 
-  describe('expandGroups', () => {
-    it('expands group key to members', () => {
-      const resolver = new Resolver(baseConfig);
+  describe('expandGroups (frontmatter-driven)', () => {
+    // Frontmatter-driven: a group's membership is determined by which skills
+    // have that group name in their frontmatter `groups:` field.
+    const frontmatterIndex: ScannedSkillIndex = new Map([
+      ['php-conventions', { name: 'php-conventions', filePath: '/fake', triggers: {}, groups: ['laravel-stack'] }],
+      ['migration-rules', { name: 'migration-rules', filePath: '/fake', triggers: {}, groups: ['laravel-stack'] }],
+      ['model-rules', { name: 'model-rules', filePath: '/fake', triggers: {}, groups: ['laravel-stack'] }],
+    ]);
+
+    it('expands a group name to all its frontmatter members', () => {
+      const resolver = new Resolver(baseConfig, frontmatterIndex);
       const expanded = resolver.expandGroups(['laravel-stack']);
       expect(expanded).toContain('php-conventions');
       expect(expanded).toContain('migration-rules');
       expect(expanded).toContain('model-rules');
     });
 
-    it('expands group member to siblings', () => {
-      const resolver = new Resolver(baseConfig, scannedIndex);
+    it('expands a skill to its group siblings', () => {
+      const resolver = new Resolver(baseConfig, frontmatterIndex);
       const expanded = resolver.expandGroups(['migration-rules']);
       expect(expanded).toContain('php-conventions');
       expect(expanded).toContain('model-rules');
     });
 
-    it('deduplicates', () => {
-      const resolver = new Resolver(baseConfig);
+    it('deduplicates when skill is in both input and group', () => {
+      const resolver = new Resolver(baseConfig, frontmatterIndex);
       const expanded = resolver.expandGroups(['php-conventions', 'laravel-stack']);
       const counts = expanded.filter(n => n === 'php-conventions');
       expect(counts.length).toBe(1);
+    });
+
+    it('returns input unchanged when no group matches', () => {
+      const resolver = new Resolver(baseConfig, frontmatterIndex);
+      const expanded = resolver.expandGroups(['nonexistent-skill']);
+      expect(expanded).toEqual(['nonexistent-skill']);
+    });
+
+    it('handles empty scannedIndex gracefully', () => {
+      const resolver = new Resolver(baseConfig, new Map());
+      const expanded = resolver.expandGroups(['any-skill']);
+      expect(expanded).toEqual(['any-skill']);
     });
   });
 
