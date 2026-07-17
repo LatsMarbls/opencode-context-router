@@ -32,9 +32,6 @@ export interface PreloaderConfig {
   /** Skills triggered by keyword/pattern in user messages */
   contentTriggers: Record<string, string[]>;
 
-  /** Named groups of skills for reuse */
-  groups: Record<string, string[]>;
-
   /** Per-skill overrides */
   skillSettings: Record<string, SkillSettings>;
 
@@ -101,7 +98,6 @@ export const DEFAULT_CONFIG: PreloaderConfig = {
   agentSkills: {},
   pathPatterns: {},
   contentTriggers: {},
-  groups: {},
   skillSettings: {},
   skillLocations: [
     // Check project-local first, then user-global

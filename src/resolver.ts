@@ -179,17 +179,33 @@ export class Resolver {
   }
 
   /**
-   * Expand skill names through group resolution.
-   * Two directions:
-   *   1. Name is a config group key → expand to all member skills
-   *   2. Name is a skill in a group → expand to all siblings in that group
+   * Expand skill names through group membership.
    *
-   * NOTE: If a skill name matches a config group name, the group wins.
-   * E.g., a skill named "laravel-stack" won't load if a group "laravel-stack" exists.
-   * Recurses up to 3 passes to handle nested groups (A→B→C).
+   * Groups are defined SOLELY by frontmatter. A group "laravel-stack" exists
+   * iff at least one skill's frontmatter `groups: ["laravel-stack", ...]`.
+   *
+   * Two directions:
+   *   1. Name is a group name → load all skills with that group in frontmatter
+   *   2. Name is a skill with `groups: [...]` → load all siblings (skills sharing
+   *      any of those group names)
+   *
+   * Recurses up to 3 passes to handle nested groups (A → B → C).
+   *
+   * Note: "always-on" loading is handled separately via `getAlwaysOnSkills()`,
+   * not via a magic "always" group.
    */
   expandGroups(skillNames: string[]): string[] {
     const result = new Set<string>();
+
+    // Build reverse map: groupName → [skillName, ...] from frontmatter
+    const groupToMembers = new Map<string, string[]>();
+    for (const [skillName, meta] of this.scannedIndex) {
+      for (const group of meta.groups ?? []) {
+        const members = groupToMembers.get(group) ?? [];
+        members.push(skillName);
+        groupToMembers.set(group, members);
+      }
+    }
 
     // Seed with original names
     skillNames.forEach(n => result.add(n));
@@ -200,26 +216,29 @@ export class Resolver {
       let added = false;
 
       for (const name of toExpand) {
-        // 1. Is this name a config group key?
-        const configGroup = this.config.groups[name];
-        if (configGroup) {
-          configGroup.forEach(n => { if (!result.has(n)) added = true; result.add(n); });
+        // 1. Is this name a group key? Load all members.
+        const members = groupToMembers.get(name);
+        if (members) {
+          for (const m of members) {
+            if (!result.has(m)) { result.add(m); added = true; }
+          }
           continue;
         }
 
-        // 2. Does this skill belong to any groups (from frontmatter)?
+        // 2. Is this a skill with group membership? Load siblings.
         const groups = this.skillToGroups.get(name);
         if (groups) {
           for (const groupName of groups) {
-            const members = this.config.groups[groupName];
-            if (members) {
-              members.forEach(n => { if (!result.has(n)) added = true; result.add(n); });
+            const siblings = groupToMembers.get(groupName);
+            if (siblings) {
+              for (const sib of siblings) {
+                if (!result.has(sib)) { result.add(sib); added = true; }
+              }
             }
           }
         }
       }
 
-      // No new names added → converged
       if (!added) break;
     }
 

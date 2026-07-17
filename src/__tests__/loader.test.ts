@@ -8,7 +8,6 @@ const testConfig: PreloaderConfig = {
   agentSkills: {},
   pathPatterns: {},
   contentTriggers: {},
-  groups: {},
   skillSettings: {},
   skillLocations: [
     '{project}/.opencode/skills/{name}/SKILL.md',
@@ -44,12 +43,5 @@ describe('SkillLoader', () => {
     expect(stats.size).toBe(0);
     expect(stats.hitRate).toBe(0);
     expect(Array.isArray(stats.entries)).toBe(true);
-  });
-
-  it('resolves groups', () => {
-    const configWithGroups = { ...testConfig, groups: { 'test-group': ['a', 'b'] } };
-    const loader = new SkillLoader(configWithGroups, '/nonexistent');
-    expect(loader.resolveGroup('test-group')).toEqual(['a', 'b']);
-    expect(loader.resolveGroup('unknown')).toEqual([]);
   });
 });

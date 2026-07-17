@@ -27,7 +27,7 @@ import { Resolver } from "./resolver.js";
 import { scanSkillFiles, type ScannedSkillIndex } from "./scanner.js";
 import { getOrCreateSession, deleteSession } from "./session.js";
 import { trackSessionEvent } from "./analytics.js";
-import { appendFileSync } from "fs";
+import { appendFileSync, existsSync, unlinkSync } from "fs";
 import { join } from "path";
 import { homedir } from "os";
 
@@ -35,6 +35,14 @@ import { homedir } from "os";
 // Writes diagnostics to ~/.config/opencode/plugins/context-routing/debug.log
 // so user can share without terminal access.
 const LOG_FILE = join(homedir(), ".config", "opencode", "plugins", "context-routing", "debug.log");
+
+// ── Reload Signal ───────────────────────────────────────────────────────────
+// Global config + skill files live in ~/.config/opencode/, which is OUTSIDE
+// the active workspace. OpenCode's file watcher won't fire for them.
+// To support hot reload of global files: a `npx context-routing reload`
+// CLI command touches this file. The plugin checks for it on each turn
+// and reloads if present, then deletes it.
+const RELOAD_SIGNAL = join(homedir(), ".config", "opencode", "plugins", "context-routing", ".reload-signal");
 
 function log(...args: unknown[]) {
   const msg = args.map(a => (typeof a === "string" ? a : JSON.stringify(a))).join(" ");
@@ -61,7 +69,8 @@ const plugin: Plugin = async ({ client, project, directory }: PluginInput) => {
   const projectDir = directory;
 
   // 1. Load configuration (project + user + defaults)
-  const config = loadConfig(projectDir);
+  //    Reassignable for hot reload (via reload signal or file watcher event).
+  let config = loadConfig(projectDir);
 
   // 2. Scan skill files for self-declared triggers
   let scannedIndex: ScannedSkillIndex = new Map();
@@ -74,13 +83,32 @@ const plugin: Plugin = async ({ client, project, directory }: PluginInput) => {
 
   // 3. Create core services
   const loader = new SkillLoader(config, projectDir, config.cacheFileTTL);
-  const resolver = new Resolver(config, scannedIndex);
+  let resolver = new Resolver(config, scannedIndex);
 
   log(`[cr-debug] Plugin init START. projectDir=${projectDir}`);
   log(`[cr-debug]   config: skills=${JSON.stringify(config.skills)}, fileTypeSkills=${JSON.stringify(Object.keys(config.fileTypeSkills))}`);
   log(`[cr-debug]   contentTriggers=${JSON.stringify(Object.keys(config.contentTriggers))}`);
   log(`[cr-debug]   agentSkills=${JSON.stringify(Object.keys(config.agentSkills))}`);
   log(`[cr-debug]   scannerEnabled=${config.scannerEnabled}, debug=${config.debug}`);
+
+  // ── Hot reload helper ─────────────────────────────────────────────
+  // Re-reads config, re-scans skills, invalidates loader cache, rebuilds resolver.
+  // Existing sessions keep their loaded skills; new config applies to new sessions
+  // and to trigger resolution in the current turn.
+  function performReload(reason: string): void {
+    log(`[cr-debug] performReload: ${reason}`);
+    config = loadConfig(projectDir);
+    if (config.scannerEnabled) {
+      scannedIndex = scanSkillFiles(config, projectDir);
+    } else {
+      scannedIndex = new Map();
+    }
+    loader.invalidateAll();
+    resolver = new Resolver(config, scannedIndex);
+    if (config.debug) {
+      console.log(`[context-routing] Reloaded (${reason}). Scanned ${scannedIndex.size} skills.`);
+    }
+  }
 
   if (config.debug) {
     console.log(`[context-routing] Initialized (project: ${projectDir})`);
@@ -96,6 +124,13 @@ const plugin: Plugin = async ({ client, project, directory }: PluginInput) => {
     "chat.message": async (input, output) => {
       log(`[cr-debug] chat.message fired. sessionID=${input.sessionID}`);
       injectedThisTurn = null;
+
+      // Check for global reload signal (set by `npx context-routing reload`).
+      // Project-local files reload automatically via file.watcher.updated below.
+      if (existsSync(RELOAD_SIGNAL)) {
+        try { unlinkSync(RELOAD_SIGNAL); } catch { /* race with another turn — fine */ }
+        performReload("global reload signal");
+      }
 
       const mgr = getOrCreateSession(input.sessionID, config.maxTokens, config.debug, config.skillTTL, config.useMinification, config.useSummaries, config.skillSettings, config.analytics);
       if (!config.accumulateSkills) {
@@ -125,9 +160,6 @@ const plugin: Plugin = async ({ client, project, directory }: PluginInput) => {
       }
 
       config.skills.forEach((n) => skillNames.add(n));
-      if (config.groups["always"]) {
-        config.groups["always"].forEach((n) => skillNames.add(n));
-      }
       resolver.getAlwaysOnSkills().forEach((n) => skillNames.add(n));
       resolver.expandGroups(Array.from(skillNames)).forEach((n) => skillNames.add(n));
 
@@ -277,6 +309,37 @@ const plugin: Plugin = async ({ client, project, directory }: PluginInput) => {
         }
         if (config.debug) {
           console.log(`[context-routing] Cleaned up session ${sessionID}`);
+        }
+        return;
+      }
+
+      // ── Hot reload: workspace file changes ───────────────────────
+      // OpenCode's file watcher fires for project workspace files.
+      // Global files (in ~/.config/opencode/) don't trigger this —
+      // use `npx context-routing reload` instead.
+      if (event.type === "file.watcher.updated") {
+        const file = (event.properties as { file?: string }).file;
+        if (!file) return;
+
+        // Project config changed → full reload
+        if (file.endsWith("context-router.jsonc") || file.endsWith("context-router.json")) {
+          performReload(`config changed: ${file}`);
+          return;
+        }
+
+        // Skill file changed → invalidate just that file + re-scan if needed
+        const isSkill = config.skillLocations.some(loc =>
+          file.includes(".opencode/skills/") || file.includes(".opencode/agent/"),
+        );
+        if (isSkill) {
+          loader.invalidateAll();
+          if (config.scannerEnabled) {
+            scannedIndex = scanSkillFiles(config, projectDir);
+            resolver = new Resolver(config, scannedIndex);
+          }
+          if (config.debug) {
+            console.log(`[context-routing] Re-scanned skills (${file} changed)`);
+          }
         }
       }
     },

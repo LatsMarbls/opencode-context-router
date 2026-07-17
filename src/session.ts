@@ -1,5 +1,6 @@
 import type { LoadedSkill } from "./loader.js";
 import { trackSkillLoaded, trackSkillDropped, trackSkillEvicted } from "./analytics.js";
+import { encode } from "gpt-tokenizer";
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -306,22 +307,20 @@ export class SessionManager {
   }
 
   /**
-   * Rough token estimate with markdown overhead penalty.
-   * Headings, bullets, and code fences add visual noise that tokenizers
-   * split into extra tokens, so we inflate char count accordingly.
+   * Real token count via gpt-tokenizer (cl100k_base encoding).
+   * Falls back to the char/4 heuristic if the encoder throws
+   * (extremely long strings, encoding edge cases).
+   *
+   * Why cl100k_base: most modern LLM families (GPT-4, Claude, Llama3) have
+   * similar token-per-char ratios for English/code, so the budget estimate
+   * stays within ~10% across families.
    */
   private estimateTokens(text: string): number {
-    let chars = text.length;
-
-    const lines = text.split('\n');
-    for (const line of lines) {
-      const trimmed = line.trimStart();
-      if (trimmed.startsWith('#')) chars += 2;        // heading markers
-      else if (trimmed.startsWith('- ') || trimmed.startsWith('* ')) chars += 1; // bullets
-      else if (trimmed.startsWith('```')) chars += 2;  // code fences
+    try {
+      return encode(text).length;
+    } catch {
+      return Math.ceil(text.length / 4);
     }
-
-    return Math.ceil(chars / 4);
   }
 
   /**

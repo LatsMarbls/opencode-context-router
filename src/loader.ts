@@ -93,13 +93,6 @@ export class SkillLoader {
   }
 
   /**
-   * Resolve a named group into its constituent skill names.
-   */
-  resolveGroup(name: string): string[] {
-    return this.config.groups[name] ?? [];
-  }
-
-  /**
    * Get all skills that have always:true in their settings.
    */
   getAlwaysOnSkills(): string[] {
@@ -117,6 +110,21 @@ export class SkillLoader {
       hitRate: this.cacheHits / (this.cacheHits + this.cacheMisses) || 0,
       entries: Array.from(this.fileCache.keys()),
     };
+  }
+
+  /**
+   * Invalidate a single cached file (used when a skill file changes).
+   * Next read will re-read from disk.
+   */
+  invalidateCache(absPath: string): void {
+    this.fileCache.delete(absPath);
+  }
+
+  /**
+   * Invalidate all cached files (used on full reload).
+   */
+  invalidateAll(): void {
+    this.fileCache.clear();
   }
 
   // ── Private ──────────────────────────────────────────────────────────────

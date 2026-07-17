@@ -6,13 +6,16 @@
  *   context-routing matrix    Same, full trigger matrix
  *   context-routing check <file>   Preview which skills fire for a file
  *   context-routing config    Show effective config
+ *   context-routing reload    Signal the running plugin to hot-reload
  *   context-routing help      This message
  */
 
+import { writeFileSync, mkdirSync } from "node:fs";
+import { join } from "node:path";
+import { homedir } from "node:os";
 import { loadConfig } from "./config";
 import { SkillLoader } from "./loader";
 import { scanSkillFiles, type ScannedSkillIndex, type ScannedSkillMeta } from "./scanner";
-
 // ── Resolve config ──────────────────────────────────────────────────────────
 
 const CWD = process.cwd();
@@ -281,6 +284,22 @@ function cmdCache(config: any): string {
   return lines.join("\n");
 }
 
+function cmdReload(): void {
+  const signalDir = join(homedir(), ".config", "opencode", "plugins", "context-routing");
+  const signalFile = join(signalDir, ".reload-signal");
+  try {
+    mkdirSync(signalDir, { recursive: true });
+    writeFileSync(signalFile, new Date().toISOString(), "utf-8");
+    console.log("\x1b[32m✓\x1b[0m Reload signal sent.");
+    console.log(`  Signal file: ${signalFile}`);
+    console.log("  The running plugin will pick this up on the next turn and reload config + skills.");
+    console.log("  (If no turn happens soon, just send any message to OpenCode.)");
+  } catch (err) {
+    console.error(`\x1b[31m✗\x1b[0m Failed to write reload signal: ${err instanceof Error ? err.message : String(err)}`);
+    process.exit(1);
+  }
+}
+
 function cmdHelp(): string {
   return `
 \x1b[1mcontext-routing\x1b[0m — OpenCode skill trigger visualizer
@@ -291,6 +310,9 @@ function cmdHelp(): string {
   context-routing check <file>  Preview which skills fire for a file
   context-routing config    Show effective config values
   context-routing cache     Show skill file cache stats
+  context-routing reload    Signal the running plugin to hot-reload
+                            (config + global skills). Use after editing
+                            files in ~/.config/opencode/.
   context-routing help      This message
 `;
 }
@@ -325,6 +347,9 @@ function main() {
       break;
     case "cache":
       console.log(cmdCache(config));
+      break;
+    case "reload":
+      cmdReload();
       break;
     default:
       console.log(cmdMatrix(config, scannedIndex));
