@@ -243,12 +243,16 @@ const plugin: Plugin = async ({ client, project, directory }: PluginInput) => {
         return;
       }
 
+      const skillNames = newSkills.map(s => s.name).join(", ");
       const formatted = newSkills.map(s =>
         `<context-route name="${s.name}">\n${s.content.trim()}\n</context-route>`
       ).join("\n\n");
 
+      // Tell the LLM these skills are already loaded — do NOT call the skill tool for them
+      const note = `<context-routes-loaded>\nThe following skills are already loaded in this system prompt: ${skillNames}\nDo NOT use the skill tool to load them again.\n</context-routes-loaded>`;
+
       log(`[cr-debug]   ✅ injecting ${newSkills.length}/${active.length} skills into system prompt (${formatted.length} chars)`);
-      output.system.push(`\n${formatted}\n`);
+      output.system.push(`\n${note}\n${formatted}\n`);
       injectedThisTurn = "system";
 
       if (config.debug) {
