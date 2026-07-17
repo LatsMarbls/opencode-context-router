@@ -58,6 +58,16 @@ describe('Resolver', () => {
       const resolver = new Resolver(baseConfig);
       expect(resolver.resolveFileTriggers('src\\Models\\User.php')).toContain('model-rules');
     });
+
+    it('matches ignore tags on path segments, not substrings (dist vs distribution)', () => {
+      const configWithDist = { ...baseConfig, triggerIgnoreTags: ['dist'] };
+      const resolver = new Resolver(configWithDist);
+      // "src/distribution/..." contains "dist" as substring, but "distribution" is a different segment
+      // and should NOT be ignored
+      expect(resolver.resolveFileTriggers('src/distribution/services/EmailService.php')).toContain('php-conventions');
+      // But actual dist/ directory SHOULD be ignored
+      expect(resolver.resolveFileTriggers('dist/bundle.js')).toEqual([]);
+    });
   });
 
   describe('resolveMessageTriggers', () => {

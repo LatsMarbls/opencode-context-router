@@ -1,5 +1,5 @@
 import type { LoadedSkill } from "./loader.js";
-import { trackSkillLoaded, trackSkillDropped } from "./analytics.js";
+import { trackSkillLoaded, trackSkillDropped, trackSkillEvicted } from "./analytics.js";
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -35,6 +35,10 @@ export class SessionManager {
 
   /** Skills that were loaded then dropped by budget filter */
   private droppedCache = new Map<string, SkillQueueEntry>();
+
+  /** Content hashes of skills already injected this turn.
+   *  Used by dedup to avoid re-scanning the entire system prompt every turn. */
+  private injectedHashes = new Set<string>();
 
   /** Session ID this manager is bound to */
   readonly sessionID: string;
@@ -144,6 +148,9 @@ export class SessionManager {
     for (const [name, entry] of this.activeSkills) {
       if (entry.loadedAt > 0 && (now - entry.loadedAt) > this.skillTTL) {
         this.activeSkills.delete(name);
+        if (this.analytics) {
+          trackSkillEvicted(this.sessionID, name);
+        }
         if (this.debug) {
           console.log(`[context-routing] Evicted stale skill "${name}" (TTL ${this.skillTTL}ms exceeded)`);
         }
@@ -186,6 +193,29 @@ export class SessionManager {
     return this.activeSkills.has(name) || this.pendingQueue.has(name);
   }
 
+  /**
+   * Filter active skills to those whose content has not yet been injected
+   * this turn. O(1) per skill via the injected-hash Set.
+   * Returns the new skills and marks them as injected in-place.
+   */
+  filterNewForInjection(): LoadedSkill[] {
+    const result: LoadedSkill[] = [];
+    for (const skill of this.getActiveSkills()) {
+      const hash = hashContent(skill.content);
+      if (this.injectedHashes.has(hash)) continue;
+      this.injectedHashes.add(hash);
+      result.push(skill);
+    }
+    return result;
+  }
+
+  /**
+   * Clear the injected-hash Set (call at start of each turn when
+   * `accumulateSkills: false`, so skills can be re-injected fresh).
+   */
+  clearInjectionCache(): void {
+    this.injectedHashes.clear();
+  }
   /**
    * Remove a skill from both active and pending.
    */
@@ -242,34 +272,36 @@ export class SessionManager {
 
   /**
    * Get current budget status (used tokens, limit, dropped skills).
+   * Single source of truth: derives both `used` and `dropped` from one
+   * `getActiveSkills()` call so they can never disagree.
    */
   getBudgetStatus(): BudgetStatus {
     this.evictStale();
 
-    const allSkills = Array.from(this.activeSkills.values())
+    const allEntries = Array.from(this.activeSkills.values())
       .sort((a, b) => b.skill.priority - a.skill.priority);
 
-    let used = 0;
-    const loaded: LoadedSkill[] = [];
-    for (const entry of allSkills) {
-      const t = this.estimateTokens(entry.skill.content);
-      if (used + t <= this.maxTokens) {
-        used += t;
-        loaded.push(entry.skill);
-      }
-    }
+    const loadedSkills = this.applyTokenBudget(allEntries.map(e => e.skill));
+    const loadedNames = new Set(loadedSkills.map(s => s.name));
 
-    const dropped = Array.from(this.droppedCache.values()).map((e) => ({
-      name: e.skill.name,
-      priority: e.skill.priority,
-      tokens: this.estimateTokens(e.skill.content),
-    }));
+    const used = loadedSkills.reduce(
+      (sum, s) => sum + this.estimateTokens(s.content),
+      0,
+    );
+
+    const dropped = allEntries
+      .filter(e => !loadedNames.has(e.skill.name))
+      .map(e => ({
+        name: e.skill.name,
+        priority: e.skill.priority,
+        tokens: this.estimateTokens(e.skill.content),
+      }));
 
     return {
       used,
       limit: this.maxTokens,
       dropped,
-      loadedCount: loaded.length,
+      loadedCount: loadedSkills.length,
     };
   }
 
@@ -408,6 +440,21 @@ export class SessionManager {
 
     return result.join('\n').trim();
   }
+}
+
+// ── Helpers ────────────────────────────────────────────────────────────────
+
+/**
+ * DJB2 hash — fast non-cryptographic string hash used for content dedup.
+ * Collisions are astronomically unlikely for skill-sized strings and would
+ * just cause a false-positive dedup (one fewer skill injected), not data loss.
+ */
+function hashContent(text: string): string {
+  let hash = 5381;
+  for (let i = 0; i < text.length; i++) {
+    hash = ((hash << 5) + hash) ^ text.charCodeAt(i);
+  }
+  return `h${(hash >>> 0).toString(36)}`;
 }
 
 // ── Session Registry ────────────────────────────────────────────────────────

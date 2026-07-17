@@ -293,11 +293,14 @@ function buildGlobRegex(pattern: string): RegExp | null {
 
 /**
  * Check if a file path should be ignored (node_modules, vendor, etc.)
+ * Matches on full path segments only — prevents "dist" from matching
+ * "src/distribution/services/EmailService.php".
  */
 function shouldIgnorePath(absPath: string, ignoreTags: string[]): boolean {
   if (ignoreTags.length === 0) return false;
   const normalized = absPath.replace(/\\/g, "/").toLowerCase();
-  return ignoreTags.some(tag => normalized.includes(tag.toLowerCase()));
+  const segments = normalized.split("/");
+  return ignoreTags.some(tag => segments.includes(tag.toLowerCase()));
 }
 
 /**

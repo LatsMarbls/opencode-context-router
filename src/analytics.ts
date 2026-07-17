@@ -73,6 +73,15 @@ export function trackSkillDropped(sessionID: string, skillName: string, priority
   });
 }
 
+export function trackSkillEvicted(sessionID: string, skillName: string): void {
+  trackEvent({
+    ts: new Date().toISOString(),
+    type: "skill.evicted",
+    skill: skillName,
+    sessionHash: hashSession(sessionID),
+  });
+}
+
 export function trackSessionEvent(type: "session.created" | "session.deleted", sessionID: string): void {
   trackEvent({
     ts: new Date().toISOString(),

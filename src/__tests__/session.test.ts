@@ -86,6 +86,36 @@ describe('SessionManager', () => {
     expect(summary).toContain('php-conventions');
   });
 
+  describe('filterNewForInjection', () => {
+    it('returns all active skills on first call', () => {
+      mgr.queueSkills([
+        makeSkill('a', 'content a'),
+        makeSkill('b', 'content b'),
+      ], 'test');
+      mgr.flushPending();
+      const newSkills = mgr.filterNewForInjection();
+      expect(newSkills.map(s => s.name).sort()).toEqual(['a', 'b']);
+    });
+
+    it('deduplicates on second call (same content)', () => {
+      mgr.queueSkills([makeSkill('a', 'content a')], 'test');
+      mgr.flushPending();
+      const first = mgr.filterNewForInjection();
+      const second = mgr.filterNewForInjection();
+      expect(first.length).toBe(1);
+      expect(second.length).toBe(0);
+    });
+
+    it('clearInjectionCache allows re-injection', () => {
+      mgr.queueSkills([makeSkill('a', 'content a')], 'test');
+      mgr.flushPending();
+      mgr.filterNewForInjection();
+      mgr.clearInjectionCache();
+      const after = mgr.filterNewForInjection();
+      expect(after.length).toBe(1);
+    });
+  });
+
   describe('summarizeContent', () => {
     it('extracts headings and first lines', () => {
       const content = `# PHP Conventions

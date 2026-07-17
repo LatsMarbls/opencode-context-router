@@ -88,104 +88,63 @@ const plugin: Plugin = async ({ client, project, directory }: PluginInput) => {
 
   // 4. Build hooks object
   const hooks: Hooks = {
-    // ── Chat message — session init + reset turn flag ──────────────────
+    // ── Chat message — session init + trigger resolution + (chatMessage) inject ──
+    // Resolution lives here (not in messages.transform) so it always runs before
+    // any transform hook fires. Decouples from the undocumented hook ordering of
+    // messages.transform vs system.transform.
 
-    "chat.message": async (input) => {
+    "chat.message": async (input, output) => {
       log(`[cr-debug] chat.message fired. sessionID=${input.sessionID}`);
       injectedThisTurn = null;
+
       const mgr = getOrCreateSession(input.sessionID, config.maxTokens, config.debug, config.skillTTL, config.useMinification, config.useSummaries, config.skillSettings, config.analytics);
       if (!config.accumulateSkills) {
         mgr.clear();
+        mgr.clearInjectionCache();
       }
 
       // Track session creation (first time only)
       if (config.analytics && mgr.getActiveSkills().length === 0) {
         trackSessionEvent("session.created", input.sessionID);
       }
-    },
 
-    // ── Messages transform — resolve triggers + load skills only ──────
-    // Injection is done by system.transform (fires after, targets system prompt).
-
-    "experimental.chat.messages.transform": async (_input, output) => {
-      log(`[cr-debug] messages.transform fired. total messages=${output.messages.length}`);
-
-      // Find last user message (fully assembled with parts)
-      const userMessages = output.messages.filter(
-        (m: any) => m.info?.role === "user",
-      );
-      log(`[cr-debug]   user messages=${userMessages.length}`);
-      const lastUserMsg = userMessages[userMessages.length - 1];
-      if (!lastUserMsg) {
-        log(`[cr-debug]   ⚠ no last user message found`);
-        return;
-      }
-
-      const sessionID = lastUserMsg.info?.sessionID;
-      const agentName = (lastUserMsg.info as any)?.agent;
-      const messageText = extractTextFromParts(lastUserMsg.parts);
-      log(`[cr-debug]   sessionID=${sessionID}, agent=${agentName}, text="${messageText?.substring(0, 80)}"`);
-
-      if (!sessionID) {
-        log(`[cr-debug]   ⚠ no sessionID on lastUserMsg.info`);
-        return;
-      }
-
-      const mgr = getOrCreateSession(sessionID, config.maxTokens, config.debug, config.skillTTL, config.useMinification, config.useSummaries, config.skillSettings, config.analytics);
-
-      // ── Resolve triggers ──────────────────────────────────────────
+      // ── Resolve triggers (moved here from messages.transform) ───────
+      const messageText = extractTextFromParts(output.parts);
+      const agentName = input.agent;
       const skillNames = new Set<string>();
 
-      // Agent-based triggers
       if (agentName) {
-        const agents = resolver.resolveAgentTriggers(agentName);
-        log(`[cr-debug]   agent triggers: ${JSON.stringify(agents)}`);
-        agents.forEach((n) => skillNames.add(n));
-      } else {
-        log(`[cr-debug]   no agent name`);
+        resolver.resolveAgentTriggers(agentName).forEach((n) => skillNames.add(n));
       }
 
-      // Content-based triggers from user's message parts
       if (messageText) {
-        const keywords = resolver.resolveMessageTriggers(messageText);
-        log(`[cr-debug]   keyword triggers: ${JSON.stringify(keywords)}`);
-        keywords.forEach((n) => skillNames.add(n));
-
-        const paths = extractPaths(messageText);
-        log(`[cr-debug]   extracted paths: ${JSON.stringify(paths)}`);
-        for (const p of paths) {
+        resolver.resolveMessageTriggers(messageText).forEach((n) => skillNames.add(n));
+        for (const p of extractPaths(messageText)) {
           resolver.resolveFileTriggers(p).forEach((n) => skillNames.add(n));
         }
-      } else {
-        log(`[cr-debug]   no message text`);
       }
 
-      // Always-on skills
       config.skills.forEach((n) => skillNames.add(n));
       if (config.groups["always"]) {
         config.groups["always"].forEach((n) => skillNames.add(n));
       }
       resolver.getAlwaysOnSkills().forEach((n) => skillNames.add(n));
-
-      // Expand group names → member skills
       resolver.expandGroups(Array.from(skillNames)).forEach((n) => skillNames.add(n));
 
-      log(`[cr-debug]   total resolved skill names: ${JSON.stringify(Array.from(skillNames))}`);
+      log(`[cr-debug]   resolved skill names: ${JSON.stringify(Array.from(skillNames))}`);
 
       // ── Load new skills ───────────────────────────────────────────
       if (skillNames.size > 0) {
         const toLoad = Array.from(skillNames).filter((n) => !mgr.hasSkill(n));
-        log(`[cr-debug]   to load (not already in session): ${JSON.stringify(toLoad)}`);
         if (toLoad.length > 0) {
           const loaded: LoadedSkill[] = [];
           let loadFailures = 0;
           for (const name of toLoad) {
             try {
               const skill = loader.loadStaticSkill(name);
-              log(`[cr-debug]     loading "${name}": ${skill ? "found" : "NOT FOUND"}`);
               if (skill) loaded.push(skill);
             } catch (err) {
-              log(`[cr-debug]     ERROR loading "${name}": ${err instanceof Error ? err.message : String(err)}`);
+              log(`[cr-debug]   ERROR loading "${name}": ${err instanceof Error ? err.message : String(err)}`);
               loadFailures++;
             }
           }
@@ -193,14 +152,13 @@ const plugin: Plugin = async ({ client, project, directory }: PluginInput) => {
             log(`[cr-debug]   ${loadFailures} skill(s) failed to load`);
           }
           if (loaded.length > 0) {
-            // Dedup: skip skills whose content already appears in system message
-            const existingSystem = output.messages
-              .filter((m: any) => m.info?.role === "system")
-              .map((m: any) => extractTextFromParts(m.parts))
-              .join("\n");
-            const deduped = loaded.filter(s => !existingSystem.includes(s.content.trim()));
+            // Dedup against active skills' content (avoid queueing same content twice)
+            const existingContent = new Set(
+              mgr.getActiveSkills().map(s => s.content.trim()),
+            );
+            const deduped = loaded.filter(s => !existingContent.has(s.content.trim()));
             if (deduped.length < loaded.length) {
-              log(`[cr-debug]   dedup: ${loaded.length - deduped.length} skills already in system message`);
+              log(`[cr-debug]   dedup: ${loaded.length - deduped.length} skills already active`);
             }
             if (deduped.length > 0) {
               mgr.queueSkills(deduped, "content.match");
@@ -218,37 +176,41 @@ const plugin: Plugin = async ({ client, project, directory }: PluginInput) => {
         }
       }
 
-      // ── Flush pending ────────────────────────────────────────────
       mgr.flushPending();
       log(`[cr-debug]   active skills after flush: ${mgr.getActiveSkills().length}`);
 
-      // ── Inject as system message if injectionMethod is chatMessage ──
+      // ── chatMessage injection mode (fallback path) ─────────────────
       if (config.injectionMethod === "chatMessage") {
-        const active = mgr.getActiveSkills();
-        if (active.length > 0) {
-          const existingSystem = output.messages
-            .filter((m: any) => m.info?.role === "system")
-            .map((m: any) => extractTextFromParts(m.parts))
-            .join("\n");
-          const newSkills = active.filter(s => !existingSystem.includes(s.content.trim()));
-          if (newSkills.length > 0) {
-            const skillNames = newSkills.map(s => s.name).join(", ");
-            const formatted = newSkills.map(s =>
-              `<context-route name="${s.name}">\n${s.content.trim()}\n</context-route>`
-            ).join("\n\n");
-            const note = `<context-routes-loaded>\nThe following skills are already loaded: ${skillNames}\nDo NOT use the skill tool to load them again.\n</context-routes-loaded>`;
-            output.messages.push({
-              info: { role: "system" },
-              parts: [`\n${note}\n${formatted}\n`],
-            } as any);
-            injectedThisTurn = "messages";
-            log(`[cr-debug]   ✅ injected ${newSkills.length} skills as system message (chatMessage mode)`);
-          }
+        const newSkills = mgr.filterNewForInjection();
+        if (newSkills.length > 0) {
+          const injectedNames = newSkills.map(s => s.name).join(", ");
+          const formatted = newSkills.map(s =>
+            `<context-route name="${s.name}">\n${s.content.trim()}\n</context-route>`
+          ).join("\n\n");
+          const note = `<context-routes-loaded>\nThe following skills are already loaded: ${injectedNames}\nDo NOT use the skill tool to load them again.\n</context-routes-loaded>`;
+          output.parts.push(`\n${note}\n${formatted}\n` as any);
+          injectedThisTurn = "messages";
+          log(`[cr-debug]   ✅ injected ${newSkills.length} skills via chatMessage mode`);
         }
       }
     },
 
-    // ── System prompt injection (preferred, skipped if chatMessage mode) ──
+    // ── Messages transform — no-op (resolution moved to chat.message) ──
+    // chat.message fires before both transform hooks and has access to
+    // message parts via output.parts, so it resolves triggers + loads skills.
+    // This hook is kept for any future per-message enrichment but currently
+    // does nothing — the system.transform hook injects from the session's
+    // already-loaded active skills.
+
+    "experimental.chat.messages.transform": async (_input, _output) => {
+      log(`[cr-debug] messages.transform fired. no-op (resolution handled in chat.message)`);
+    },
+
+    // ── System prompt injection (primary path) ───────────────────────
+    // Resolution + loading already done in chat.message. This hook just
+    // injects whatever's in the session's active skill set, deduped by
+    // content hash. Works regardless of whether this hook fires before or
+    // after messages.transform.
 
     "experimental.chat.system.transform": async (input, output) => {
       const sessionID = input.sessionID;
@@ -256,7 +218,7 @@ const plugin: Plugin = async ({ client, project, directory }: PluginInput) => {
 
       if (!sessionID) return;
 
-      // Skip if injectionMethod is chatMessage — already handled by messages.transform
+      // Skip if injectionMethod is chatMessage — already injected in chat.message
       if (config.injectionMethod === "chatMessage") {
         log(`[cr-debug]   skipping — chatMessage injection mode`);
         return;
@@ -264,28 +226,14 @@ const plugin: Plugin = async ({ client, project, directory }: PluginInput) => {
 
       const mgr = getOrCreateSession(sessionID, config.maxTokens, config.debug, config.skillTTL, config.useMinification, config.useSummaries, config.skillSettings, config.analytics);
 
-      // Flush any pending skills into active
+      // Safety: flush any pending (should be empty since chat.message already flushed)
       mgr.flushPending();
 
-      const activeCount = mgr.getActiveSkills().length;
-      log(`[cr-debug]   active skills=${activeCount}, injectedThisTurn=${injectedThisTurn}`);
-
-      if (injectedThisTurn === "messages") {
-        log(`[cr-debug]   skipping — messages already injected`);
-        return;
-      }
-
-      const active = mgr.getActiveSkills();
-      if (active.length === 0) {
-        log(`[cr-debug]   ⚠ no active skills`);
-        return;
-      }
-
-      // Dedup: skip skills whose content already appears in system prompt
-      const existingSystem = output.system.join("\n");
-      const newSkills = active.filter(s => !existingSystem.includes(s.content.trim()));
+      // Dedup via per-session hash Set — O(1) per skill instead of
+      // re-scanning the whole system prompt every turn.
+      const newSkills = mgr.filterNewForInjection();
       if (newSkills.length === 0) {
-        log(`[cr-debug]   ⚠ all ${active.length} skills already present in system prompt — skipping`);
+        log(`[cr-debug]   ⚠ no new skills to inject`);
         return;
       }
 
@@ -297,13 +245,11 @@ const plugin: Plugin = async ({ client, project, directory }: PluginInput) => {
       // Tell the LLM these skills are already loaded — do NOT call the skill tool for them
       const note = `<context-routes-loaded>\nThe following skills are already loaded in this system prompt: ${skillNames}\nDo NOT use the skill tool to load them again.\n</context-routes-loaded>`;
 
-      log(`[cr-debug]   ✅ injecting ${newSkills.length}/${active.length} skills into system prompt (${formatted.length} chars)`);
+      log(`[cr-debug]   ✅ injecting ${newSkills.length} skills into system prompt (${formatted.length} chars)`);
       output.system.push(`\n${note}\n${formatted}\n`);
-      injectedThisTurn = "system";
 
       if (config.debug) {
-        const count = mgr.getActiveSkills().length;
-        console.log(`[context-routing] Injected ${count} skills into system prompt`);
+        console.log(`[context-routing] Injected ${newSkills.length} skills into system prompt`);
       }
     },
 
