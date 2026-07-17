@@ -24,6 +24,15 @@ import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";
 import * as yaml from "js-yaml";
 import type { PreloaderConfig } from "./config.js";
+import {
+  loadScanCache,
+  saveScanCache,
+  getCachedEntry,
+  getCachedLocations,
+  getFileStat,
+  buildCacheForProject,
+  type ScanCacheEntry,
+} from "./scanCache.js";
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -59,6 +68,10 @@ export type ScannedSkillIndex = Map<string, ScannedSkillMeta>;
 /**
  * Walk all configured skill locations and build a trigger index
  * from any files that have YAML frontmatter.
+ *
+ * Uses the scan cache to skip re-reading files whose mtime + size haven't
+ * changed since the last scan. Cache is at
+ * ~/.config/opencode/plugins/context-routing/scan-cache.json.
  */
 export function scanSkillFiles(
   config: PreloaderConfig,
@@ -67,14 +80,65 @@ export function scanSkillFiles(
   const index: ScannedSkillIndex = new Map();
   const seen = new Set<string>(); // track by absPath to avoid dupes
 
+  // Load cache + check if skill locations have changed since last scan.
+  // If they have, the cache is meaningless (might be missing new files).
+  const cache = loadScanCache();
+  const cachedLocations = cache ? getCachedLocations(cache, projectDir) : undefined;
+  const locationsUnchanged =
+    cachedLocations !== undefined &&
+    cachedLocations.length === config.skillLocations.length &&
+    cachedLocations.every((loc, i) => loc === config.skillLocations[i]);
+
+  const newCacheEntries: Record<string, ScanCacheEntry> = {};
+
   for (const tmpl of config.skillLocations) {
     const files = findFilesFromTemplate(tmpl, projectDir);
     for (const { skillName, absPath } of files) {
       if (seen.has(absPath)) continue;
       seen.add(absPath);
 
-      const content = readFileSync(absPath, "utf-8");
-      const { frontmatter } = parseFrontmatter(content);
+      // Cheap stat call — mtime + size
+      const stat = getFileStat(absPath);
+      if (!stat) continue; // file gone between findFiles and stat
+
+      let frontmatter: ParsedFrontmatter | null = null;
+      let fromCache = false;
+
+      // Try cache first (if locations unchanged)
+      if (cache && locationsUnchanged) {
+        const cached = getCachedEntry(cache, projectDir, skillName);
+        if (
+          cached &&
+          cached.filePath === absPath &&
+          cached.mtime === stat.mtime &&
+          cached.size === stat.size
+        ) {
+          // Cache hit — skip read + parse
+          frontmatter = cached.frontmatter;
+          fromCache = true;
+        }
+      }
+
+      // Cache miss or stale — actually read the file
+      if (!fromCache) {
+        const content = readFileSync(absPath, "utf-8");
+        const parsed = parseFrontmatter(content);
+        frontmatter = parsed.frontmatter;
+      }
+
+      // Record the entry for the new cache (only if file has frontmatter)
+      if (frontmatter) {
+        const entry: ScanCacheEntry = {
+          name: frontmatter.name ?? skillName,
+          filePath: absPath,
+          mtime: stat.mtime,
+          size: stat.size,
+          frontmatter,
+        };
+        // Key by the effective name (what it'll be in the index)
+        newCacheEntries[frontmatter.name ?? skillName] = entry;
+      }
+
       if (!frontmatter) continue; // no frontmatter → not self-declaring
 
       const name = frontmatter.name ?? skillName;
@@ -92,10 +156,20 @@ export function scanSkillFiles(
       });
 
       if (config.debug) {
-        console.log(`[context-routing] Scanned skill "${name}" from ${absPath}`);
+        const source = fromCache ? "cache" : "disk";
+        console.log(`[context-routing] Scanned skill "${name}" from ${absPath} (${source})`);
       }
     }
   }
+
+  // Save updated cache for this project (preserves other projects' entries)
+  const updatedCache = buildCacheForProject(
+    cache,
+    projectDir,
+    config.skillLocations,
+    newCacheEntries,
+  );
+  saveScanCache(updatedCache);
 
   return index;
 }
