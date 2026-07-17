@@ -178,8 +178,18 @@ function cmdCheck(filePath: string, config: any, scannedIndex?: ScannedSkillInde
   const ext = filePath.split(".").pop()?.toLowerCase() ?? "";
   const fileName = filePath.split(/[\\/]/).pop() ?? "";
 
+  // Honor triggerIgnoreTags the same way the runtime does.
+  // Matches on path SEGMENTS only (not substrings) — "dist" doesn't match
+  // "src/distribution/Foo.php" but DOES match "dist/Foo.js".
+  const ignoreTags = (config as any).triggerIgnoreTags ?? [];
+  const segments = filePath.replace(/\\/g, "/").toLowerCase().split("/");
+  const ignored = ignoreTags.some((tag: string) => segments.includes(tag.toLowerCase()));
+
   lines.push(`\n\x1b[1mChecking: ${filePath}\x1b[0m`);
   lines.push(`  extension: \x1b[33m.${ext}\x1b[0m`);
+  if (ignored) {
+    lines.push(`  \x1b[33m⚠\x1b[0m  Path is in triggerIgnoreTags — runtime would skip this file.`);
+  }
   lines.push("");
 
   const matched: string[] = [];
@@ -189,6 +199,7 @@ function cmdCheck(filePath: string, config: any, scannedIndex?: ScannedSkillInde
   for (const [fe, names] of Object.entries((config as any).fileTypeSkills ?? {})) {
     if (fe === `.${ext}` || fe === ext) {
       for (const n of names as string[]) {
+        if (ignored) continue;
         matched.push(n);
         reasons.push(`extension .${ext}`);
       }
@@ -202,6 +213,7 @@ function cmdCheck(filePath: string, config: any, scannedIndex?: ScannedSkillInde
     );
     if (re.test(filePath) || re.test(fileName)) {
       for (const n of names as string[]) {
+        if (ignored) continue;
         matched.push(n);
         reasons.push(`path ${pat}`);
       }
@@ -212,6 +224,7 @@ function cmdCheck(filePath: string, config: any, scannedIndex?: ScannedSkillInde
   if (scannedIndex) {
     for (const [name, meta] of scannedIndex) {
       if (meta.triggers.extensions?.includes(`.${ext}`) || meta.triggers.extensions?.includes(ext)) {
+        if (ignored) continue;
         matched.push(name);
         reasons.push(`scanned extension .${ext}`);
       }

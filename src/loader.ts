@@ -142,7 +142,11 @@ export class SkillLoader {
       const content = readFileSync(absPath, "utf-8");
       this.fileCache.set(absPath, { content, loadedAt: now });
       return content;
-    } catch {
+    } catch (err) {
+      if (this.config.debug) {
+        const reason = err instanceof Error ? err.message : String(err);
+        console.error(`[context-routing] Failed to read skill at ${absPath}: ${reason}`);
+      }
       return null;
     }
   }

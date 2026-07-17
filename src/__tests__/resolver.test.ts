@@ -77,6 +77,20 @@ describe('Resolver', () => {
       const resolver = new Resolver(baseConfig);
       expect(resolver.resolveMessageTriggers('Create a Migration')).toContain('migration-rules');
     });
+
+    it('matches digit suffix (vue → vue3, swift → swift5)', () => {
+      const config = { ...baseConfig, contentTriggers: { vue: ['vue-rules'], swift: ['swift-rules'] } };
+      const resolver = new Resolver(config);
+      expect(resolver.resolveMessageTriggers('using vue3')).toContain('vue-rules');
+      expect(resolver.resolveMessageTriggers('writing swift5 code')).toContain('swift-rules');
+    });
+
+    it('does NOT match if letters follow the keyword', () => {
+      const config = { ...baseConfig, contentTriggers: { vue: ['vue-rules'] } };
+      const resolver = new Resolver(config);
+      // "vuex" has 'x' (letter) after "vue" — must NOT match
+      expect(resolver.resolveMessageTriggers('using vuex')).not.toContain('vue-rules');
+    });
   });
 
   describe('resolveAgentTriggers', () => {

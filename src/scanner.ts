@@ -172,7 +172,7 @@ function findFilesFromTemplate(
 
 // ── Frontmatter parser (js-yaml) ────────────────────────────────────────────
 
-interface ParsedFrontmatter {
+export interface ParsedFrontmatter {
   name?: string;
   triggers?: {
     extensions?: string[];
@@ -190,7 +190,7 @@ interface ParsedFrontmatter {
  * Handles all valid YAML via js-yaml (lists of maps, nested objects,
  * quoted strings, multi-line, etc.)
  */
-function parseFrontmatter(content: string): {
+export function parseFrontmatter(content: string): {
   frontmatter: ParsedFrontmatter | null;
   body: string;
 } {

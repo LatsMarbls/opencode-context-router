@@ -21,6 +21,7 @@
  *   Either way: same-turn visibility ✓
  */
 import type { Plugin, PluginInput, Hooks } from "@opencode-ai/plugin";
+import type { Part } from "@opencode-ai/sdk";
 import { loadConfig } from "./config.js";
 import { SkillLoader, type LoadedSkill } from "./loader.js";
 import { Resolver } from "./resolver.js";
@@ -220,7 +221,7 @@ const plugin: Plugin = async ({ client, project, directory }: PluginInput) => {
             `<context-route name="${s.name}">\n${s.content.trim()}\n</context-route>`
           ).join("\n\n");
           const note = `<context-routes-loaded>\nThe following skills are already loaded: ${injectedNames}\nDo NOT use the skill tool to load them again.\n</context-routes-loaded>`;
-          output.parts.push(`\n${note}\n${formatted}\n` as any);
+          output.parts.push({ type: "text", text: `\n${note}\n${formatted}\n` } as Part);
           injectedThisTurn = "messages";
           log(`[cr-debug]   ✅ injected ${newSkills.length} skills via chatMessage mode`);
         }
@@ -352,7 +353,7 @@ const plugin: Plugin = async ({ client, project, directory }: PluginInput) => {
       context_routes: {
         description: "Show all context-routed skills grouped by file extension with budget usage",
         args: {} as Record<string, never>,
-        async execute(_args: Record<string, never>, context: any) {
+        async execute(_args: Record<string, never>, context: ToolContextLike) {
           const mgr = getOrCreateSession(
             context.sessionID,
             config.maxTokens,
@@ -452,11 +453,23 @@ export default plugin;
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
 /**
+ * OpenCode message part shape (subset we care about for text extraction).
+ * The full `Part` type is a union with many variants; we only need the
+ * text-like ones.
+ */
+type PartLike = Part | { type?: string; text?: string };
+
+/** OpenCode tool execution context (subset). */
+interface ToolContextLike {
+  sessionID: string;
+}
+
+/**
  * Extract file-path-like strings from message text.
  */
 function extractPaths(text: string): string[] {
   const results = new Set<string>();
-  const pathRegex = /(?:[a-zA-Z]:[\\/])?(?:[\w.-]+[\\/])+[\w.-]+\.(\w{2,6})/g;
+  const pathRegex = /(?:[a-zA-Z]:[\\/])?(?:[\w.\-@()[\] ]+[\\/])+[\w.\-@()[\] ]+\.(\w{2,8})/g;
   let match: RegExpExecArray | null;
   while ((match = pathRegex.exec(text)) !== null) {
     results.add(match[0].replace(/\\/g, "/"));
@@ -464,12 +477,14 @@ function extractPaths(text: string): string[] {
   return Array.from(results);
 }
 
-function extractTextFromParts(parts: unknown[]): string {
+function extractTextFromParts(parts: Part[] | unknown): string {
   if (!parts || !Array.isArray(parts)) return "";
-  return parts
-    .map((p: any) => {
+  return (parts as unknown[])
+    .map((p: unknown) => {
       if (typeof p === "string") return p;
-      if (p?.type === "text") return p.text ?? "";
+      if (p && typeof p === "object" && (p as { type?: string }).type === "text") {
+        return (p as { text?: string }).text ?? "";
+      }
       return "";
     })
     .join(" ")

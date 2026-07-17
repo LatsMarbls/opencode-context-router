@@ -330,6 +330,7 @@ function shouldIgnorePath(absPath: string, ignoreTags: string[]): boolean {
  *   - "controller" does NOT match "controllers"
  *   - "c++" matches "write c++ code" (regex special chars escaped)
  *   - Multi-word phrases like "vue component"
+ *   - "vue" DOES match "vue3" (digit suffix allowed for version-aware keywords)
  * Case-insensitive.
  *
  * Uses word-boundary detection with explicit char-class checks for hyphen
@@ -340,9 +341,10 @@ function matchesWholeWord(text: string, keyword: string): boolean {
   // Escape regex special chars so literal keywords don't break the regex
   const escaped = keyword.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   try {
-    // Use word boundary detection without lookbehind.
-    // \b handles most cases; add explicit char-class checks for hyphen boundaries.
-    const re = new RegExp(`(?:^|[^\\w-])${escaped}(?:[^\\w-]|$)`, "i");
+    // Boundary: (start | non-word-non-hyphen) before.
+    // Boundary: after must be (non-word-non-hyphen | end | digits+end).
+    // The trailing \d* allows version-like suffixes (vue3, swift5, react18).
+    const re = new RegExp(`(?:^|[^\\w-])${escaped}\\d*(?:[^\\w-]|$)`, "i");
     return re.test(text);
   } catch {
     return false;
