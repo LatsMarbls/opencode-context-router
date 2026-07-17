@@ -10,6 +10,7 @@
  */
 
 import { loadConfig } from "./config";
+import { SkillLoader } from "./loader";
 import { scanSkillFiles, type ScannedSkillIndex, type ScannedSkillMeta } from "./scanner";
 
 // ── Resolve config ──────────────────────────────────────────────────────────
@@ -250,6 +251,36 @@ function cmdConfig(config: any): string {
   return lines.join("\n");
 }
 
+function cmdCache(config: any): string {
+  const loader = new SkillLoader(config, CWD, config.cacheFileTTL);
+  // Load all known skills to populate cache
+  const allSkills = new Set<string>();
+  for (const names of Object.values(config.fileTypeSkills ?? {})) (names as string[]).forEach(n => allSkills.add(n));
+  for (const names of Object.values(config.pathPatterns ?? {})) (names as string[]).forEach(n => allSkills.add(n));
+  for (const names of Object.values(config.agentSkills ?? {})) (names as string[]).forEach(n => allSkills.add(n));
+  for (const names of Object.values(config.contentTriggers ?? {})) (names as string[]).forEach(n => allSkills.add(n));
+  (config.skills ?? []).forEach((n: string) => allSkills.add(n));
+
+  for (const name of allSkills) {
+    loader.loadStaticSkill(name);
+  }
+
+  const stats = loader.getCacheStats();
+  const lines: string[] = [];
+  lines.push("\n\x1b[1mSkill File Cache\x1b[0m");
+  lines.push("━".repeat(48));
+  lines.push(`  Cached files:  ${stats.size}`);
+  lines.push(`  Hit rate:      ${(stats.hitRate * 100).toFixed(1)}%`);
+  if (stats.entries.length > 0) {
+    lines.push("");
+    lines.push("  Entries:");
+    for (const entry of stats.entries) {
+      lines.push(`    • ${entry}`);
+    }
+  }
+  return lines.join("\n");
+}
+
 function cmdHelp(): string {
   return `
 \x1b[1mcontext-routing\x1b[0m — OpenCode skill trigger visualizer
@@ -259,6 +290,7 @@ function cmdHelp(): string {
   context-routing matrix    Full trigger matrix
   context-routing check <file>  Preview which skills fire for a file
   context-routing config    Show effective config values
+  context-routing cache     Show skill file cache stats
   context-routing help      This message
 `;
 }
@@ -290,6 +322,9 @@ function main() {
       break;
     case "config":
       console.log(cmdConfig(config));
+      break;
+    case "cache":
+      console.log(cmdCache(config));
       break;
     default:
       console.log(cmdMatrix(config, scannedIndex));

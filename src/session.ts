@@ -1,4 +1,5 @@
 import type { LoadedSkill } from "./loader.js";
+import { trackSkillLoaded, trackSkillDropped } from "./analytics.js";
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -44,6 +45,9 @@ export class SessionManager {
     private debug: boolean = false,
     private skillTTL: number = 600_000, // 10 min default
     private useMinification: boolean | "standard" | "aggressive" = false,
+    private useSummaries: boolean = false,
+    private skillSettings: Record<string, { useSummary?: boolean }> = {},
+    private analytics: boolean = false,
   ) {
     this.sessionID = sessionID;
   }
@@ -80,6 +84,17 @@ export class SessionManager {
    */
   flushPending(): LoadedSkill[] {
     for (const [name, entry] of this.pendingQueue) {
+      // Apply summarization FIRST (reduces content before minification)
+      const shouldSummarize = this.useSummaries
+        && (this.skillSettings[name]?.useSummary !== false)
+        && entry.skill.content.length > 500;
+      if (shouldSummarize) {
+        entry.skill = {
+          ...entry.skill,
+          content: this.summarizeContent(entry.skill.content),
+        };
+      }
+
       // Apply minification if enabled
       if (this.useMinification) {
         entry.skill = {
@@ -89,6 +104,13 @@ export class SessionManager {
       }
       entry.loadedAt = Date.now();
       this.activeSkills.set(name, entry);
+
+      // Track analytics for this skill load
+      if (this.analytics) {
+        const tokens = this.estimateTokens(entry.skill.content);
+        trackSkillLoaded(this.sessionID, name, entry.trigger, entry.skill.priority, tokens);
+      }
+
       // If this skill was previously dropped by budget, re-activate clears that
       this.droppedCache.delete(name);
     }
@@ -199,6 +221,11 @@ export class SessionManager {
           loadedAt: 0,
           trigger: "dropped:budget",
         });
+
+        if (this.analytics) {
+          trackSkillDropped(this.sessionID, skill.name, skill.priority, tokens);
+        }
+
         if (this.debug) {
           console.log(`[context-routing] Budget exceeded at "${skill.name}" (${total}+${tokens} > ${this.maxTokens})`);
         }
@@ -301,6 +328,86 @@ export class SessionManager {
 
     return result.trim();
   }
+
+  /**
+   * Generate a structural summary of a skill file.
+   * Extracts headings, first sentences of sections, and code block hints.
+   * Reduces token count by ~60% while preserving the skill's intent.
+   */
+  summarizeContent(content: string): string {
+    const lines = content.split('\n');
+    const result: string[] = [];
+    let inCodeBlock = false;
+    let lastHeading = '';
+    let sectionFirstLine = '';
+    let capturedFirstLine = false;
+
+    for (const line of lines) {
+      const trimmed = line.trim();
+
+      // Track code blocks — just note the language
+      if (trimmed.startsWith('```')) {
+        if (!inCodeBlock) {
+          inCodeBlock = true;
+          const lang = trimmed.slice(3).trim();
+          if (lang) result.push(`\`\`\`${lang} ... \`\`\``);
+        } else {
+          inCodeBlock = false;
+        }
+        continue;
+      }
+      if (inCodeBlock) continue;
+
+      // Capture headings
+      if (trimmed.startsWith('#')) {
+        // Flush previous section's first line
+        if (sectionFirstLine && !capturedFirstLine) {
+          result.push(sectionFirstLine);
+          capturedFirstLine = true;
+        }
+        result.push(trimmed);
+        lastHeading = trimmed;
+        sectionFirstLine = '';
+        capturedFirstLine = false;
+        continue;
+      }
+
+      // Capture first non-empty line after a heading
+      if (lastHeading && !trimmed && !sectionFirstLine) continue;
+      if (lastHeading && trimmed && !sectionFirstLine) {
+        sectionFirstLine = trimmed.length > 120 ? trimmed.slice(0, 117) + '...' : trimmed;
+        capturedFirstLine = false;
+      }
+
+      // Tables: keep header row and separator only
+      if (trimmed.startsWith('|') && trimmed.endsWith('|')) {
+        if (!result.some(r => r.startsWith('|') && r.includes('---'))) {
+          result.push(trimmed);
+        }
+        // Also keep separator if this is it
+        if (trimmed.includes('---')) {
+          result.push(trimmed);
+        }
+        continue;
+      }
+
+      // Lists: keep first item of each list
+      if (trimmed.startsWith('- ') || trimmed.startsWith('* ') || /^\d+\.\s/.test(trimmed)) {
+        if (!capturedFirstLine) {
+          result.push(trimmed.length > 100 ? trimmed.slice(0, 97) + '...' : trimmed);
+          capturedFirstLine = true;
+        }
+        continue;
+      }
+    }
+
+    // Flush last section
+    if (sectionFirstLine && !capturedFirstLine) {
+      result.push(sectionFirstLine);
+    }
+
+    return result.join('\n').trim();
+  }
 }
 
 // ── Session Registry ────────────────────────────────────────────────────────
@@ -313,10 +420,13 @@ export function getOrCreateSession(
   debug?: boolean,
   skillTTL?: number,
   useMinification?: boolean | "standard" | "aggressive",
+  useSummaries?: boolean,
+  skillSettings?: Record<string, { useSummary?: boolean }>,
+  analytics?: boolean,
 ): SessionManager {
   let mgr = sessions.get(sessionID);
   if (!mgr) {
-    mgr = new SessionManager(sessionID, maxTokens, debug, skillTTL, useMinification);
+    mgr = new SessionManager(sessionID, maxTokens, debug, skillTTL, useMinification, useSummaries, skillSettings, analytics);
     sessions.set(sessionID, mgr);
   }
   return mgr;

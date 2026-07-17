@@ -26,6 +26,7 @@ import { SkillLoader, type LoadedSkill } from "./loader.js";
 import { Resolver } from "./resolver.js";
 import { scanSkillFiles, type ScannedSkillIndex } from "./scanner.js";
 import { getOrCreateSession, deleteSession } from "./session.js";
+import { trackSessionEvent } from "./analytics.js";
 import { appendFileSync } from "fs";
 import { join } from "path";
 import { homedir } from "os";
@@ -92,9 +93,14 @@ const plugin: Plugin = async ({ client, project, directory }: PluginInput) => {
     "chat.message": async (input) => {
       log(`[cr-debug] chat.message fired. sessionID=${input.sessionID}`);
       injectedThisTurn = null;
-      const mgr = getOrCreateSession(input.sessionID, config.maxTokens, config.debug, config.skillTTL, config.useMinification);
+      const mgr = getOrCreateSession(input.sessionID, config.maxTokens, config.debug, config.skillTTL, config.useMinification, config.useSummaries, config.skillSettings, config.analytics);
       if (!config.accumulateSkills) {
         mgr.clear();
+      }
+
+      // Track session creation (first time only)
+      if (config.analytics && mgr.getActiveSkills().length === 0) {
+        trackSessionEvent("session.created", input.sessionID);
       }
     },
 
@@ -125,7 +131,7 @@ const plugin: Plugin = async ({ client, project, directory }: PluginInput) => {
         return;
       }
 
-      const mgr = getOrCreateSession(sessionID, config.maxTokens, config.debug, config.skillTTL, config.useMinification);
+      const mgr = getOrCreateSession(sessionID, config.maxTokens, config.debug, config.skillTTL, config.useMinification, config.useSummaries, config.skillSettings, config.analytics);
 
       // ── Resolve triggers ──────────────────────────────────────────
       const skillNames = new Set<string>();
@@ -212,12 +218,37 @@ const plugin: Plugin = async ({ client, project, directory }: PluginInput) => {
         }
       }
 
-      // ── Flush pending (injection is handled by system.transform) ──
+      // ── Flush pending ────────────────────────────────────────────
       mgr.flushPending();
       log(`[cr-debug]   active skills after flush: ${mgr.getActiveSkills().length}`);
+
+      // ── Inject as system message if injectionMethod is chatMessage ──
+      if (config.injectionMethod === "chatMessage") {
+        const active = mgr.getActiveSkills();
+        if (active.length > 0) {
+          const existingSystem = output.messages
+            .filter((m: any) => m.info?.role === "system")
+            .map((m: any) => extractTextFromParts(m.parts))
+            .join("\n");
+          const newSkills = active.filter(s => !existingSystem.includes(s.content.trim()));
+          if (newSkills.length > 0) {
+            const skillNames = newSkills.map(s => s.name).join(", ");
+            const formatted = newSkills.map(s =>
+              `<context-route name="${s.name}">\n${s.content.trim()}\n</context-route>`
+            ).join("\n\n");
+            const note = `<context-routes-loaded>\nThe following skills are already loaded: ${skillNames}\nDo NOT use the skill tool to load them again.\n</context-routes-loaded>`;
+            output.messages.push({
+              info: { role: "system" },
+              parts: [`\n${note}\n${formatted}\n`],
+            } as any);
+            injectedThisTurn = "messages";
+            log(`[cr-debug]   ✅ injected ${newSkills.length} skills as system message (chatMessage mode)`);
+          }
+        }
+      }
     },
 
-    // ── System prompt injection (preferred) ──────────────────────────
+    // ── System prompt injection (preferred, skipped if chatMessage mode) ──
 
     "experimental.chat.system.transform": async (input, output) => {
       const sessionID = input.sessionID;
@@ -225,7 +256,13 @@ const plugin: Plugin = async ({ client, project, directory }: PluginInput) => {
 
       if (!sessionID) return;
 
-      const mgr = getOrCreateSession(sessionID, config.maxTokens, config.debug, config.skillTTL, config.useMinification);
+      // Skip if injectionMethod is chatMessage — already handled by messages.transform
+      if (config.injectionMethod === "chatMessage") {
+        log(`[cr-debug]   skipping — chatMessage injection mode`);
+        return;
+      }
+
+      const mgr = getOrCreateSession(sessionID, config.maxTokens, config.debug, config.skillTTL, config.useMinification, config.useSummaries, config.skillSettings, config.analytics);
 
       // Flush any pending skills into active
       mgr.flushPending();
@@ -275,7 +312,7 @@ const plugin: Plugin = async ({ client, project, directory }: PluginInput) => {
     "experimental.session.compacting": async (input, output) => {
       if (!config.persistAfterCompaction) return;
 
-      const mgr = getOrCreateSession(input.sessionID, config.maxTokens, config.debug, config.skillTTL, config.useMinification);
+      const mgr = getOrCreateSession(input.sessionID, config.maxTokens, config.debug, config.skillTTL, config.useMinification, config.useSummaries, config.skillSettings, config.analytics);
 
       const summary = mgr.getSkillsSummary();
       if (!summary) return;
@@ -289,6 +326,9 @@ const plugin: Plugin = async ({ client, project, directory }: PluginInput) => {
       if (event.type === "session.deleted") {
         const sessionID = event.properties.info.id;
         deleteSession(sessionID);
+        if (config.analytics) {
+          trackSessionEvent("session.deleted", sessionID);
+        }
         if (config.debug) {
           console.log(`[context-routing] Cleaned up session ${sessionID}`);
         }
@@ -310,6 +350,9 @@ const plugin: Plugin = async ({ client, project, directory }: PluginInput) => {
             config.debug,
             config.skillTTL,
             config.useMinification,
+            config.useSummaries,
+            config.skillSettings,
+            config.analytics,
           );
 
           log(`[cr-debug] context_routes tool: sessionID=${context.sessionID}, active=${mgr.getActiveSkills().length}`);
