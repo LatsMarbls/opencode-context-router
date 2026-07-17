@@ -310,18 +310,17 @@ function shouldIgnorePath(absPath: string, ignoreTags: string[]): boolean {
  *   - Multi-word phrases like "vue component"
  * Case-insensitive.
  *
- * Uses negative lookbehind/lookahead for [\w-] to prevent matching inside
- * hyphenated compounds (kebab-case) and adjacent word chars.
+ * Uses word-boundary detection with explicit char-class checks for hyphen
+ * boundaries, avoiding lookbehind for compatibility with older runtimes.
  */
 function matchesWholeWord(text: string, keyword: string): boolean {
   if (!keyword) return false;
   // Escape regex special chars so literal keywords don't break the regex
   const escaped = keyword.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   try {
-    // (?<!\w-) ensures not preceded by word char or hyphen
-    // (?![\w-]) ensures not followed by word char or hyphen
-    // This prevents "typescript" matching inside "typescript-rule"
-    const re = new RegExp(`(?<![\\w-])${escaped}(?![\\w-])`, "i");
+    // Use word boundary detection without lookbehind.
+    // \b handles most cases; add explicit char-class checks for hyphen boundaries.
+    const re = new RegExp(`(?:^|[^\\w-])${escaped}(?:[^\\w-]|$)`, "i");
     return re.test(text);
   } catch {
     return false;

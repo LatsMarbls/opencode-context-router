@@ -26,6 +26,8 @@ interface CacheEntry {
 export class SkillLoader {
   private fileCache = new Map<string, CacheEntry>();
   private readonly cacheTTL: number;
+  private cacheHits = 0;
+  private cacheMisses = 0;
 
   constructor(
     private config: PreloaderConfig,
@@ -106,14 +108,27 @@ export class SkillLoader {
       .map(([name]) => name);
   }
 
+  /**
+   * Get cache statistics for debugging/inspection.
+   */
+  getCacheStats(): { size: number; hitRate: number; entries: string[] } {
+    return {
+      size: this.fileCache.size,
+      hitRate: this.cacheHits / (this.cacheHits + this.cacheMisses) || 0,
+      entries: Array.from(this.fileCache.keys()),
+    };
+  }
+
   // ── Private ──────────────────────────────────────────────────────────────
 
   private readFile(absPath: string): string | null {
     const cached = this.fileCache.get(absPath);
     const now = Date.now();
     if (cached && (now - cached.loadedAt) < this.cacheTTL) {
+      this.cacheHits++;
       return cached.content;
     }
+    this.cacheMisses++;
     // Stale or missing — re-read from disk
     try {
       const content = readFileSync(absPath, "utf-8");

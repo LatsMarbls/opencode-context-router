@@ -92,7 +92,7 @@ const plugin: Plugin = async ({ client, project, directory }: PluginInput) => {
     "chat.message": async (input) => {
       log(`[cr-debug] chat.message fired. sessionID=${input.sessionID}`);
       injectedThisTurn = null;
-      const mgr = getOrCreateSession(input.sessionID, config.maxTokens, config.debug, config.skillTTL);
+      const mgr = getOrCreateSession(input.sessionID, config.maxTokens, config.debug, config.skillTTL, config.useMinification);
       if (!config.accumulateSkills) {
         mgr.clear();
       }
@@ -125,7 +125,7 @@ const plugin: Plugin = async ({ client, project, directory }: PluginInput) => {
         return;
       }
 
-      const mgr = getOrCreateSession(sessionID, config.maxTokens, config.debug, config.skillTTL);
+      const mgr = getOrCreateSession(sessionID, config.maxTokens, config.debug, config.skillTTL, config.useMinification);
 
       // ── Resolve triggers ──────────────────────────────────────────
       const skillNames = new Set<string>();
@@ -172,10 +172,19 @@ const plugin: Plugin = async ({ client, project, directory }: PluginInput) => {
         log(`[cr-debug]   to load (not already in session): ${JSON.stringify(toLoad)}`);
         if (toLoad.length > 0) {
           const loaded: LoadedSkill[] = [];
+          let loadFailures = 0;
           for (const name of toLoad) {
-            const skill = loader.loadStaticSkill(name);
-            log(`[cr-debug]     loading "${name}": ${skill ? "found" : "NOT FOUND"}`);
-            if (skill) loaded.push(skill);
+            try {
+              const skill = loader.loadStaticSkill(name);
+              log(`[cr-debug]     loading "${name}": ${skill ? "found" : "NOT FOUND"}`);
+              if (skill) loaded.push(skill);
+            } catch (err) {
+              log(`[cr-debug]     ERROR loading "${name}": ${err instanceof Error ? err.message : String(err)}`);
+              loadFailures++;
+            }
+          }
+          if (loadFailures > 0) {
+            log(`[cr-debug]   ${loadFailures} skill(s) failed to load`);
           }
           if (loaded.length > 0) {
             // Dedup: skip skills whose content already appears in system message
@@ -216,7 +225,7 @@ const plugin: Plugin = async ({ client, project, directory }: PluginInput) => {
 
       if (!sessionID) return;
 
-      const mgr = getOrCreateSession(sessionID, config.maxTokens, config.debug, config.skillTTL);
+      const mgr = getOrCreateSession(sessionID, config.maxTokens, config.debug, config.skillTTL, config.useMinification);
 
       // Flush any pending skills into active
       mgr.flushPending();
@@ -266,7 +275,7 @@ const plugin: Plugin = async ({ client, project, directory }: PluginInput) => {
     "experimental.session.compacting": async (input, output) => {
       if (!config.persistAfterCompaction) return;
 
-      const mgr = getOrCreateSession(input.sessionID, config.maxTokens, config.debug, config.skillTTL);
+      const mgr = getOrCreateSession(input.sessionID, config.maxTokens, config.debug, config.skillTTL, config.useMinification);
 
       const summary = mgr.getSkillsSummary();
       if (!summary) return;
@@ -300,6 +309,7 @@ const plugin: Plugin = async ({ client, project, directory }: PluginInput) => {
             config.maxTokens,
             config.debug,
             config.skillTTL,
+            config.useMinification,
           );
 
           log(`[cr-debug] context_routes tool: sessionID=${context.sessionID}, active=${mgr.getActiveSkills().length}`);

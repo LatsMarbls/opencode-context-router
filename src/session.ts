@@ -43,6 +43,7 @@ export class SessionManager {
     private maxTokens: number = 8_000,
     private debug: boolean = false,
     private skillTTL: number = 600_000, // 10 min default
+    private useMinification: boolean | "standard" | "aggressive" = false,
   ) {
     this.sessionID = sessionID;
   }
@@ -79,6 +80,13 @@ export class SessionManager {
    */
   flushPending(): LoadedSkill[] {
     for (const [name, entry] of this.pendingQueue) {
+      // Apply minification if enabled
+      if (this.useMinification) {
+        entry.skill = {
+          ...entry.skill,
+          content: this.minifyContent(entry.skill.content, this.useMinification),
+        };
+      }
       entry.loadedAt = Date.now();
       this.activeSkills.set(name, entry);
       // If this skill was previously dropped by budget, re-activate clears that
@@ -238,9 +246,60 @@ export class SessionManager {
     };
   }
 
-  /** Rough token estimate: ~4 chars per token */
+  /**
+   * Rough token estimate with markdown overhead penalty.
+   * Headings, bullets, and code fences add visual noise that tokenizers
+   * split into extra tokens, so we inflate char count accordingly.
+   */
   private estimateTokens(text: string): number {
-    return Math.ceil(text.length / 4);
+    let chars = text.length;
+
+    const lines = text.split('\n');
+    for (const line of lines) {
+      const trimmed = line.trimStart();
+      if (trimmed.startsWith('#')) chars += 2;        // heading markers
+      else if (trimmed.startsWith('- ') || trimmed.startsWith('* ')) chars += 1; // bullets
+      else if (trimmed.startsWith('```')) chars += 2;  // code fences
+    }
+
+    return Math.ceil(chars / 4);
+  }
+
+  /**
+   * Strip markdown noise to reduce token count.
+   * "standard" mode: remove HTML comments, collapse 3+ blank lines to 2.
+   * "aggressive" mode: also strip markdown link syntax, image tags, and trailing whitespace.
+   */
+  minifyContent(content: string, level: boolean | "standard" | "aggressive" = false): string {
+    if (!level) return content;
+
+    let result = content;
+
+    // Standard: remove HTML comments
+    result = result.replace(/<!--[\s\S]*?-->/g, "");
+
+    // Standard: collapse 3+ consecutive blank lines to 2
+    result = result.replace(/\n{3,}/g, "\n\n");
+
+    // Standard: trim trailing whitespace per line
+    result = result.replace(/[ \t]+$/gm, "");
+
+    if (level === "aggressive") {
+      // Strip markdown image syntax: ![alt](url) → alt
+      result = result.replace(/!\[([^\]]*)\]\([^)]*\)/g, "$1");
+      // Strip markdown link syntax: [text](url) → text
+      result = result.replace(/\[([^\]]*)\]\([^)]*\)/g, "$1");
+      // Strip reference-style links: [text][ref] → text
+      result = result.replace(/\[([^\]]*)\]\[[^\]]*\]/g, "$1");
+      // Remove link definitions: [ref]: url
+      result = result.replace(/^\[[^\]]*\]:\s+.*$/gm, "");
+      // Collapse multiple spaces
+      result = result.replace(/  +/g, " ");
+      // Collapse 2+ blank lines to 1
+      result = result.replace(/\n{2,}/g, "\n");
+    }
+
+    return result.trim();
   }
 }
 
@@ -253,10 +312,11 @@ export function getOrCreateSession(
   maxTokens?: number,
   debug?: boolean,
   skillTTL?: number,
+  useMinification?: boolean | "standard" | "aggressive",
 ): SessionManager {
   let mgr = sessions.get(sessionID);
   if (!mgr) {
-    mgr = new SessionManager(sessionID, maxTokens, debug, skillTTL);
+    mgr = new SessionManager(sessionID, maxTokens, debug, skillTTL, useMinification);
     sessions.set(sessionID, mgr);
   }
   return mgr;
