@@ -146,24 +146,38 @@ const plugin: Plugin = async ({ client, project, directory }: PluginInput) => {
       }
 
       // ── Resolve triggers (moved here from messages.transform) ───────
+      // Two buckets:
+      //   expandable  — triggers that SHOULD expand groups (file/agent/group-name)
+      //   keywordOnly — keyword-matched skills that load solo, no group expansion
       const messageText = extractTextFromParts(output.parts);
       const agentName = input.agent;
-      const skillNames = new Set<string>();
+      const expandable = new Set<string>();
+      const keywordOnly = new Set<string>();
 
       if (agentName) {
-        resolver.resolveAgentTriggers(agentName).forEach((n) => skillNames.add(n));
+        resolver.resolveAgentTriggers(agentName).forEach((n) => expandable.add(n));
       }
 
       if (messageText) {
-        resolver.resolveMessageTriggers(messageText).forEach((n) => skillNames.add(n));
+        // Group name keywords → expandable (loads all member skills)
+        resolver.resolveGroupNameTriggers(messageText).forEach((n) => expandable.add(n));
+
+        // Individual skill keywords → keywordOnly (NO group expansion)
+        resolver.resolveMessageTriggers(messageText).forEach((n) => keywordOnly.add(n));
+
         for (const p of extractPaths(messageText)) {
-          resolver.resolveFileTriggers(p).forEach((n) => skillNames.add(n));
+          resolver.resolveFileTriggers(p).forEach((n) => expandable.add(n));
         }
       }
 
-      config.skills.forEach((n) => skillNames.add(n));
-      resolver.getAlwaysOnSkills().forEach((n) => skillNames.add(n));
-      resolver.expandGroups(Array.from(skillNames)).forEach((n) => skillNames.add(n));
+      config.skills.forEach((n) => expandable.add(n));
+      resolver.getAlwaysOnSkills().forEach((n) => expandable.add(n));
+
+      // Expand groups only from expandable set
+      resolver.expandGroups(Array.from(expandable)).forEach((n) => expandable.add(n));
+
+      // Merge: expandable + keyword-only (keyword-only don't get group expansion)
+      const skillNames = new Set([...expandable, ...keywordOnly]);
 
       log(`[cr-debug]   resolved skill names: ${JSON.stringify(Array.from(skillNames))}`);
 

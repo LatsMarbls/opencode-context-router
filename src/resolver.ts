@@ -126,6 +126,38 @@ export class Resolver {
   }
 
   /**
+   * Get all known group names from scanned skill frontmatter.
+   */
+  getAllGroupNames(): string[] {
+    const names = new Set<string>();
+    for (const meta of this.scannedIndex.values()) {
+      for (const g of meta.groups ?? []) {
+        names.add(g);
+      }
+    }
+    return Array.from(names);
+  }
+
+  /**
+   * Check if message text contains any group name as a whole word.
+   * Returns matching group names — these will be passed to expandGroups
+   * to load all member skills of that group.
+   *
+   * Example: "load all backend-stack rules" → ["backend-stack"]
+   * Unlike resolveMessageTriggers, this triggers GROUP expansion rather
+   * than loading a single skill.
+   */
+  resolveGroupNameTriggers(messageText: string): string[] {
+    const matched: string[] = [];
+    for (const groupName of this.getAllGroupNames()) {
+      if (matchesWholeWord(messageText, groupName)) {
+        matched.push(groupName);
+      }
+    }
+    return matched;
+  }
+
+  /**
    * Get all skill names that should always be loaded.
    * Merges config always-on + scanned always-on.
    */
