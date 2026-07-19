@@ -1,0 +1,48 @@
+[2026-07-19T14:39:29.217Z] [init] projectDir=C:\Users\latre
+[2026-07-19T14:39:29.218Z] [init] skills=[]
+[2026-07-19T14:39:29.220Z] [init] fileTypeSkills=[]
+[2026-07-19T14:39:29.221Z] [init] contentTriggers=[]
+[2026-07-19T14:39:29.223Z] [init] agentSkills=[]
+[2026-07-19T14:39:29.224Z] [init] semanticWindow=false, embedder=none
+[2026-07-19T14:46:01.095Z] [turn] session=ses_0876a6362ffeC4Pga3dsQlMjHU
+[2026-07-19T14:46:01.097Z] [turn] resolved: []
+[2026-07-19T14:46:01.099Z] [active] count=0
+[2026-07-19T15:09:13.437Z] [turn] session=ses_0876a6362ffeC4Pga3dsQlMjHU
+[2026-07-19T15:09:13.438Z] [turn] resolved: []
+[2026-07-19T15:09:13.438Z] [active] count=0
+[2026-07-19T15:10:42.054Z] [turn] session=ses_0876a6362ffeC4Pga3dsQlMjHU
+[2026-07-19T15:10:42.056Z] [turn] resolved: []
+[2026-07-19T15:10:42.057Z] [active] count=0
+[2026-07-19T15:19:55.822Z] [turn] session=ses_0876a6362ffeC4Pga3dsQlMjHU
+[2026-07-19T15:19:55.823Z] [turn] resolved: []
+[2026-07-19T15:19:55.824Z] [active] count=0
+[2026-07-19T15:24:05.955Z] [init] projectDir=C:\Users\latre
+[2026-07-19T15:24:05.957Z] [init] skills=[]
+[2026-07-19T15:24:05.958Z] [init] fileTypeSkills=[]
+[2026-07-19T15:24:05.959Z] [init] contentTriggers=[]
+[2026-07-19T15:24:05.960Z] [init] agentSkills=[]
+[2026-07-19T15:24:05.960Z] [init] semanticWindow=false, embedder=none
+[2026-07-19T15:26:55.627Z] [init] projectDir=C:\Users\latre
+[2026-07-19T15:26:55.629Z] [init] skills=[]
+[2026-07-19T15:26:55.630Z] [init] fileTypeSkills=[]
+[2026-07-19T15:26:55.631Z] [init] contentTriggers=[]
+[2026-07-19T15:26:55.632Z] [init] agentSkills=[]
+[2026-07-19T15:26:55.632Z] [init] semanticWindow=false, embedder=none
+[2026-07-19T15:27:59.355Z] [turn] session=ses_0876a6362ffeC4Pga3dsQlMjHU
+[2026-07-19T15:27:59.356Z] [turn] resolved: ["plan-rules"]
+[2026-07-19T15:27:59.364Z] [load] queued: plan-rules
+[2026-07-19T15:27:59.385Z] [active] count=1
+[2026-07-19T15:27:59.387Z] [active] plan-rules (source=static-file, priority=5)
+[2026-07-19T15:28:00.079Z] [inject] 1 skills into system prompt (934 chars)
+[2026-07-19T21:45:21.522Z] [init] projectDir=C:\Users\latre
+[2026-07-19T21:45:21.523Z] [init] skills=[]
+[2026-07-19T21:45:21.523Z] [init] fileTypeSkills=[]
+[2026-07-19T21:45:21.524Z] [init] contentTriggers=[]
+[2026-07-19T21:45:21.524Z] [init] agentSkills=[]
+[2026-07-19T21:45:21.525Z] [init] semanticWindow=false, embedder=none
+[2026-07-19T21:45:50.643Z] [turn] session=ses_0876a6362ffeC4Pga3dsQlMjHU
+[2026-07-19T21:45:50.644Z] [turn] resolved: []
+[2026-07-19T21:45:50.645Z] [active] count=0
+[2026-07-19T21:47:03.781Z] [turn] session=ses_0876a6362ffeC4Pga3dsQlMjHU
+[2026-07-19T21:47:03.782Z] [turn] resolved: []
+[2026-07-19T21:47:03.783Z] [active] count=0

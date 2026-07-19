@@ -17,11 +17,22 @@
 
   // ── Accumulate skills across turns ────────────────────────────────────────
   // true: skills persist across turns (default). false: fresh each turn.
-  "accumulateSkills": true,
+  "accumulateSkills": false,
 
   // ── Show TUI toast on skill load/unload ───────────────────────────────────
   "showToasts": true,
 
   // ── Verbose console logging ──────────────────────────────────────────────
-  "debug": false
+  "debug": true,
+
+  // ── Semantic message search ─────────────────────────────────────────────
+  // Reorder messages by semantic relevance using ONNX embeddings + LanceDB.
+  // When true, past messages are embedded and stored. On each LLM call,
+  // the latest user message queries for relevant past messages.
+  "semanticWindow": true,
+  "embedder": "onnx",
+  "model": "all-MiniLM-L6-v2",
+  "vectorStore": "lancedb",
+  "maxResults": 20,
+  "minScore": 0.4
 }

@@ -341,6 +341,8 @@ Some content here that would normally take a moment to parse.
     enableTools: false, analytics: false, persistAfterCompaction: true,
     accumulateSkills: true, debug: false, priority: {},
     skillTTL: 600000, cacheFileTTL: 60000,
+    semanticWindow: false, embedder: "none", model: "all-MiniLM-L6-v2",
+    vectorStore: "lancedb", maxResults: 20, minScore: 0.4,
   };
 
   // Cold scan

@@ -78,6 +78,24 @@ export interface PreloaderConfig {
   /** Enable verbose logging */
   debug: boolean;
 
+  /** Enable semantic message search — reorder messages by relevance */
+  semanticWindow: boolean;
+
+  /** Embedding provider */
+  embedder: "onnx" | "none";
+
+  /** Embedding model name */
+  model: string;
+
+  /** Vector store backend */
+  vectorStore: "lancedb" | "memory";
+
+  /** Max search results from semantic search */
+  maxResults: number;
+
+  /** Minimum similarity score threshold */
+  minScore: number;
+
   /** Global priority map (skillName → weight). Higher = survives budget cuts. */
   priority: Record<string, number>;
 
@@ -127,6 +145,12 @@ export const DEFAULT_CONFIG: PreloaderConfig = {
   accumulateSkills: true,
   scannerEnabled: true,
   debug: false,
+  semanticWindow: false,
+  embedder: "none",
+  model: "all-MiniLM-L6-v2",
+  vectorStore: "lancedb",
+  maxResults: 20,
+  minScore: 0.4,
   priority: {},
   skillTTL: 600_000,
   cacheFileTTL: 60_000,

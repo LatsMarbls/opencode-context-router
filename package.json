@@ -36,6 +36,8 @@
     "vitest": "^4.1.10"
   },
   "dependencies": {
+    "@huggingface/transformers": "^3.0.0",
+    "@lancedb/lancedb": "^0.26.0",
     "gpt-tokenizer": "^3.4.0",
     "js-yaml": "^5.2.1"
   }
