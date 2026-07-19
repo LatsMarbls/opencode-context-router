@@ -2,23 +2,10 @@
  * Plugin entry point — hooks registration for OpenCode.
  *
  * Architecture:
- *   chat.message                  → session init + reset turn flag
- *   experimental.chat.messages.transform → resolve triggers → load → queue
- *                                          → inject as system message (FALLBACK)
- *   experimental.chat.system.transform    → flush queue → inject into
- *                                          system prompt (PREFERRED)
+ *   chat.message                  → session init + trigger resolution + load
+ *   experimental.chat.system.transform    → inject into system prompt
  *   experimental.session.compacting      → persist skill list across compaction
- *   event                               → cleanup on session deleted
- *
- * Hook order detection:
- *   OpenCode's hook invocation order for messages.transform vs system.transform
- *   is undocumented. Instead of guessing, we detect which fires FIRST each turn
- *   via an `injectedThisTurn` flag. Whichever fires first injects skills.
- *   The other hook skips (avoids duplication).
- *
- *   When system.transform fires first → skills inject into system prompt (ideal)
- *   When messages.transform fires first → skills inject as system message (fallback)
- *   Either way: same-turn visibility ✓
+ *   event                               → cleanup on session deleted + hot reload
  */
 import type { Plugin, PluginInput, Hooks } from "@opencode-ai/plugin";
 import type { Part } from "@opencode-ai/sdk";
@@ -55,15 +42,6 @@ function log(...args: unknown[]) {
     // silently fail if file can't be written
   }
 }
-
-// ── Turn-scoped state ──────────────────────────────────────────────────────
-
-/**
- * Tracks which hook injected skills this turn.
- * Reset to `null` at the start of each turn (chat.message).
- * Whichever hook fires first sets this; the other skips.
- */
-let injectedThisTurn: "messages" | "system" | null = null;
 
 // ── Plugin Definition ───────────────────────────────────────────────────────
 
@@ -118,14 +96,10 @@ const plugin: Plugin = async ({ client, project, directory }: PluginInput) => {
 
   // 4. Build hooks object
   const hooks: Hooks = {
-    // ── Chat message — session init + trigger resolution + (chatMessage) inject ──
-    // Resolution lives here (not in messages.transform) so it always runs before
-    // any transform hook fires. Decouples from the undocumented hook ordering of
-    // messages.transform vs system.transform.
+    // ── Chat message — session init + trigger resolution + load ─────────────
 
     "chat.message": async (input, output) => {
       log(`[cr-debug] chat.message fired. sessionID=${input.sessionID}`);
-      injectedThisTurn = null;
 
       // Check for global reload signal (set by `npx context-routing reload`).
       // Project-local files reload automatically via file.watcher.updated below.
@@ -145,7 +119,7 @@ const plugin: Plugin = async ({ client, project, directory }: PluginInput) => {
         trackSessionEvent("session.created", input.sessionID);
       }
 
-      // ── Resolve triggers (moved here from messages.transform) ───────
+      // ── Resolve triggers ──────────────────────────────────────────
       // Two buckets:
       //   expandable  — triggers that SHOULD expand groups (file/agent/group-name)
       //   keywordOnly — keyword-matched skills that load solo, no group expansion
@@ -237,28 +211,15 @@ const plugin: Plugin = async ({ client, project, directory }: PluginInput) => {
           ).join("\n\n");
           const note = `<context-routes-loaded>\nThe following skills are already loaded: ${injectedNames}\nDo NOT use the skill tool to load them again.\n</context-routes-loaded>`;
           output.parts.push({ type: "text", text: `\n${note}\n${formatted}\n` } as Part);
-          injectedThisTurn = "messages";
           log(`[cr-debug]   ✅ injected ${newSkills.length} skills via chatMessage mode`);
         }
       }
     },
 
-    // ── Messages transform — no-op (resolution moved to chat.message) ──
-    // chat.message fires before both transform hooks and has access to
-    // message parts via output.parts, so it resolves triggers + loads skills.
-    // This hook is kept for any future per-message enrichment but currently
-    // does nothing — the system.transform hook injects from the session's
-    // already-loaded active skills.
-
-    "experimental.chat.messages.transform": async (_input, _output) => {
-      log(`[cr-debug] messages.transform fired. no-op (resolution handled in chat.message)`);
-    },
-
-    // ── System prompt injection (primary path) ───────────────────────
-    // Resolution + loading already done in chat.message. This hook just
+    // ── System prompt injection ────────────────────────────────────
+    // Resolution + loading already done in chat.message. This hook
     // injects whatever's in the session's active skill set, deduped by
-    // content hash. Works regardless of whether this hook fires before or
-    // after messages.transform.
+    // content hash.
 
     "experimental.chat.system.transform": async (input, output) => {
       const sessionID = input.sessionID;
