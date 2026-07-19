@@ -7,3 +7,9 @@ dist/
 .codebase-index-store/
 .opencode/
 debug.log
+skill.log
+message.log
+perf.log
+active-skills.json
+scan-cache.json
+.vector-store/
