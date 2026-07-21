@@ -10,7 +10,7 @@ export default defineConfig({
   sourcemap: true,
   clean: true,
   // Bundle all deps so the plugin has zero runtime dependencies
-  noExternal: ["js-yaml"],
+  noExternal: ["js-yaml", "gpt-tokenizer"],
   // Target is Bun/Node 20+ with modern JS
   target: "es2022",
   // npm/npx bin wrapper handles the shebang — no banner needed
