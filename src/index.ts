@@ -15,8 +15,8 @@ import { Resolver } from "./resolver.js";
 import { scanSkillFiles, type ScannedSkillIndex } from "./scanner.js";
 import { getOrCreateSession, deleteSession } from "./session.js";
 import { trackSessionEvent } from "./analytics.js";
-import { appendFileSync, existsSync, unlinkSync } from "fs";
-import { join } from "path";
+import { appendFileSync, existsSync, mkdirSync, unlinkSync } from "fs";
+import { join, dirname } from "path";
 import { homedir } from "os";
 import { loadScanCache } from "./scanCache.js";
 
@@ -37,6 +37,7 @@ function log(...args: unknown[]) {
   const msg = args.map(a => (typeof a === "string" ? a : JSON.stringify(a))).join(" ");
   const line = `[${new Date().toISOString()}] ${msg}\n`;
   try {
+    mkdirSync(dirname(LOG_FILE), { recursive: true });
     appendFileSync(LOG_FILE, line, "utf-8");
   } catch {
     // silently fail if file can't be written
@@ -209,7 +210,7 @@ const plugin: Plugin = async ({ client, project, directory }: PluginInput) => {
           const formatted = newSkills.map(s =>
             `<context-route name="${s.name}">\n${s.content.trim()}\n</context-route>`
           ).join("\n\n");
-          const note = `<context-routes-loaded>\nThe following skills are already loaded: ${injectedNames}\nDo NOT use the skill tool to load them again.\n</context-routes-loaded>`;
+          const note = `<context-routes-loaded>\nThe following skills are already loaded: ${injectedNames}\nTheir content is already in this system prompt below. Do NOT use the skill tool or read the .md files — the content is already here.\n</context-routes-loaded>`;
           output.parts.push({ type: "text", text: `\n${note}\n${formatted}\n` } as Part);
           log(`[cr-debug]   ✅ injected ${newSkills.length} skills via chatMessage mode`);
         }
@@ -252,7 +253,7 @@ const plugin: Plugin = async ({ client, project, directory }: PluginInput) => {
       ).join("\n\n");
 
       // Tell the LLM these skills are already loaded — do NOT call the skill tool for them
-      const note = `<context-routes-loaded>\nThe following skills are already loaded in this system prompt: ${skillNames}\nDo NOT use the skill tool to load them again.\n</context-routes-loaded>`;
+      const note = `<context-routes-loaded>\nThe following skills are already loaded in this system prompt: ${skillNames}\nTheir content is included below. Do NOT use the skill tool to load them again, and do NOT read the .md files — the content is already in your system prompt.\n</context-routes-loaded>`;
 
       log(`[cr-debug]   ✅ injecting ${newSkills.length} skills into system prompt (${formatted.length} chars)`);
       output.system.push(`\n${note}\n${formatted}\n`);
