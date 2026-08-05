@@ -231,6 +231,7 @@ priority: 10
       enableTools: false, analytics: false, persistAfterCompaction: true,
       accumulateSkills: true, debug: false, priority: {},
       skillTTL: 600000, cacheFileTTL: 60000,
+      precedencePrimary: 'path', precedenceSubagent: 'path',
     };
     const index = scanSkillFiles(config, tmpDir);
     expect(index.size).toBe(1);
@@ -256,6 +257,7 @@ priority: 10
       enableTools: false, analytics: false, persistAfterCompaction: true,
       accumulateSkills: true, debug: false, priority: {},
       skillTTL: 600000, cacheFileTTL: 60000,
+      precedencePrimary: 'path', precedenceSubagent: 'path',
     };
 
     // First scan — populates cache

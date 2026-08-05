@@ -28,6 +28,8 @@ const testConfig: PreloaderConfig = {
   priority: {},
   skillTTL: 600000,
   cacheFileTTL: 60000,
+  precedencePrimary: 'path',
+  precedenceSubagent: 'path',
 };
 
 describe('SkillLoader', () => {

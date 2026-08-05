@@ -8,9 +8,11 @@
  * Config triggers take priority over scanned triggers for the same skill name.
  *
  * Routing semantics:
- *   - FILE/FOLDER paths: if ANY path pattern matches the file, only the
- *     path-matched skills load (extension triggers are suppressed — the more
- *     specific match wins). If no path matches, extension triggers apply.
+ *   - FILE/FOLDER paths: a matched trigger bucket (path OR extension) can take
+ *     precedence per config.precedencePrimary / precedenceSubagent. By default
+ *     a folder-path match suppresses the broad extension list (path-wins); with
+ *     precedence "extension", the .ext trigger wins instead. The losing bucket
+ *     is only used as fallback when the winning bucket is empty.
  */
 import type { PreloaderConfig } from "./config.js";
 import type { ScannedSkillIndex } from "./scanner.js";
@@ -126,33 +128,41 @@ export class Resolver {
    * Given an absolute file path, resolve all skill names that match
    * based on extension and path patterns. Checks both config and scanned sources.
    *
-   * Path-wins: if any path pattern matches, extension triggers are suppressed
-   * for this file (the specific match wins over the broad extension match).
+   * Precedence when a file matches BOTH a path pattern and an extension trigger:
+   *   "path"      — path-matched skills win, extension suppressed
+   *   "extension" — extension-triggered skills win, path suppressed
+   * If the winning bucket is empty, the other bucket is used as fallback.
+   * The primary/subagent choice is made by the caller; defaults to
+   * config.precedencePrimary when omitted.
    */
-  resolveFileTriggers(filePath: string): string[] {
+  resolveFileTriggers(filePath: string, precedence?: "path" | "extension"): string[] {
     if (shouldIgnorePath(filePath, this.config.triggerIgnoreTags)) {
       return [];
     }
 
     const normPath = filePath.replace(/\\/g, "/");
-    const matched = new Set<string>();
+    const pathMatched = new Set<string>();
+    const extMatched = new Set<string>();
 
-    // 1. Path patterns (config + scanned) — evaluated first.
+    // Path patterns (config + scanned).
     for (const entry of this.pathEntries) {
       if (testGlob(normPath, entry.regex)) {
-        entry.names.forEach(n => matched.add(n));
+        entry.names.forEach(n => pathMatched.add(n));
       }
     }
 
-    // Path-wins: suppress extension triggers when any path matched.
-    if (matched.size > 0) return Array.from(matched);
-
-    // 2. Extension triggers (config + scanned) — fallback.
+    // Extension triggers (config + scanned).
     const ext = normPath.split(".").pop()?.toLowerCase() ?? "";
     const extSkills = this.extToSkills.get(ext);
-    if (extSkills) extSkills.forEach(s => matched.add(s));
+    if (extSkills) extSkills.forEach(s => extMatched.add(s));
 
-    return Array.from(matched);
+    const mode = precedence ?? this.config.precedencePrimary;
+    if (mode === "extension") {
+      if (extMatched.size > 0) return Array.from(extMatched);
+      return Array.from(pathMatched);
+    }
+    if (pathMatched.size > 0) return Array.from(pathMatched);
+    return Array.from(extMatched);
   }
 
   // ── Agent triggers ─────────────────────────────────────────────────────

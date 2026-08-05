@@ -190,9 +190,9 @@ function cmdCheck(filePath: string, config: any, scannedIndex?: ScannedSkillInde
   }
   lines.push("");
 
-  // Use the SAME resolver the runtime plugin uses (path-wins semantics).
+  // Use the SAME resolver the runtime plugin uses (primary precedence = config.precedencePrimary).
   const resolver = new Resolver(config, scannedIndex);
-  const matched = resolver.resolveFileTriggers(filePath);
+  const matched = resolver.resolveFileTriggers(filePath, config.precedencePrimary);
 
   if (matched.length === 0) {
     lines.push("No skills trigger for this file.");
@@ -303,6 +303,7 @@ Some content here that would normally take a moment to parse.
     enableTools: false, analytics: false, persistAfterCompaction: true,
     accumulateSkills: true, debug: false, priority: {},
     skillTTL: 600000, cacheFileTTL: 60000,
+    precedencePrimary: "path", precedenceSubagent: "path",
   };
 
   // Cold scan

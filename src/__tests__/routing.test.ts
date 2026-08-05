@@ -48,6 +48,8 @@ const config: PreloaderConfig = {
   priority: {},
   skillTTL: 600000,
   cacheFileTTL: 60000,
+  precedencePrimary: 'path',
+  precedenceSubagent: 'extension',
 };
 
 describe('Routing precision (path ≥ extension)', () => {
@@ -90,6 +92,36 @@ describe('Routing precision (path ≥ extension)', () => {
     // Root-level file — no `src/` / `app/` / test path match → extension set.
     expect(result).toContain('php-conventions');
     expect(result).toContain('model-rules');
+  });
+});
+
+describe('Precedence (primary vs subagent)', () => {
+  it('primary (default "path") loads only the path-matched skill', () => {
+    const resolver = new Resolver(config, scannedIndex);
+    const r = resolver.resolveFileTriggers('src/Models/User.php');
+    expect(r).toContain('model-rules');
+    expect(r).not.toContain('php-conventions');
+  });
+
+  it('explicit "extension" precedence loads all .php skills, dropping path match', () => {
+    const resolver = new Resolver(config, scannedIndex);
+    const r = resolver.resolveFileTriggers('src/Models/User.php', 'extension');
+    expect(r).toContain('php-conventions');
+    expect(r).toContain('model-rules'); // all 9 declare .php
+    expect(r.length).toBe(9);
+  });
+
+  it('"extension" precedence still falls back to path when ext has no skills', () => {
+    const resolver = new Resolver(config, scannedIndex);
+    const r = resolver.resolveFileTriggers('src/Models/readme', 'extension');
+    expect(r).toContain('model-rules');
+    expect(r).not.toContain('php-conventions');
+  });
+
+  it('subagent flag matches config.precedenceSubagent', () => {
+    const subConfig: PreloaderConfig = { ...config, precedenceSubagent: 'extension' } as const;
+    const resolver = new Resolver(subConfig, scannedIndex);
+    expect(resolver.resolveFileTriggers('src/Models/User.php', subConfig.precedenceSubagent).length).toBe(9);
   });
 });
 

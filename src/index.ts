@@ -134,6 +134,9 @@ const plugin: Plugin = async ({ client, project, directory }: PluginInput) => {
       //   keywordOnly — keyword-matched skills that load solo, no group expansion
       const messageText = extractTextFromParts(output.parts);
       const agentName = input.agent;
+      const filePrecedence = agentName
+        ? config.precedenceSubagent
+        : config.precedencePrimary;
       const expandable = new Set<string>();
       const keywordOnly = new Set<string>();
       const fileScoped = new Set<string>();
@@ -149,9 +152,9 @@ const plugin: Plugin = async ({ client, project, directory }: PluginInput) => {
         // Individual skill keywords → keywordOnly (NO group expansion)
         resolver.resolveMessageTriggers(messageText).forEach((n) => keywordOnly.add(n));
 
-        // File/folder references → fileScoped (path-wins, NO group expansion)
+        // File/folder references → fileScoped (NO group expansion)
         for (const p of extractPaths(messageText)) {
-          resolver.resolveFileTriggers(p).forEach((n) => fileScoped.add(n));
+          resolver.resolveFileTriggers(p, filePrecedence).forEach((n) => fileScoped.add(n));
         }
       }
 

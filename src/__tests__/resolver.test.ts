@@ -26,6 +26,8 @@ const baseConfig: PreloaderConfig = {
   priority: { 'controller-rules': 100 },
   skillTTL: 600000,
   cacheFileTTL: 60000,
+  precedencePrimary: 'path',
+  precedenceSubagent: 'extension',
 };
 
 describe('Resolver', () => {
@@ -41,6 +43,15 @@ describe('Resolver', () => {
       // NOT the broad .php extension skills.
       expect(resolver.resolveFileTriggers('src/Models/User.php')).toEqual(['model-rules']);
       expect(resolver.resolveFileTriggers('src/Models/User.php')).not.toContain('php-conventions');
+    });
+
+    it('extension precedence — .ext wins over the path pattern', () => {
+      const resolver = new Resolver(baseConfig);
+      // Same file, but with "extension" precedence: the .php extension trigger
+      // wins over the src/Models/** path — php-conventions loads, model-rules dropped.
+      const r = resolver.resolveFileTriggers('src/Models/User.php', 'extension');
+      expect(r).toContain('php-conventions');
+      expect(r).not.toContain('model-rules');
     });
 
     it('ignores paths in node_modules', () => {

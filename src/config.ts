@@ -90,6 +90,16 @@ export interface PreloaderConfig {
   /** File cache TTL (ms). How long a skill file read is cached before
    *  re-reading from disk. Default 60000 (1 min). */
   cacheFileTTL: number;
+
+  /** File trigger precedence for the PRIMARY agent when a referenced file
+   *  matches BOTH an extension trigger and a path pattern.
+   *  "path"      — the folder-path match wins over .ext (default)
+   *  "extension" — the .ext trigger wins over the folder-path match */
+  precedencePrimary: "path" | "extension";
+
+  /** Same as precedencePrimary, but for SUBAGENTS. Lets subagents route
+   *  by extension even when the primary agent prefers path-wins. */
+  precedenceSubagent: "path" | "extension";
 }
 
 // ── Defaults ────────────────────────────────────────────────────────────────
@@ -130,6 +140,8 @@ export const DEFAULT_CONFIG: PreloaderConfig = {
   priority: {},
   skillTTL: 600_000,
   cacheFileTTL: 60_000,
+  precedencePrimary: "path",
+  precedenceSubagent: "path",
 };
 
 // ── Config resolution ──────────────────────────────────────────────────────
