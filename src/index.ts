@@ -19,6 +19,7 @@ import { appendFileSync, existsSync, mkdirSync, unlinkSync } from "fs";
 import { join, dirname } from "path";
 import { homedir } from "os";
 import { loadScanCache } from "./scanCache.js";
+import { extractPaths } from "./paths.js";
 
 // ── File Logger ─────────────────────────────────────────────────────────────
 // Writes diagnostics to ~/.config/opencode/plugins/context-routing/debug.log
@@ -33,7 +34,12 @@ const LOG_FILE = join(homedir(), ".config", "opencode", "plugins", "context-rout
 // and reloads if present, then deletes it.
 const RELOAD_SIGNAL = join(homedir(), ".config", "opencode", "plugins", "context-routing", ".reload-signal");
 
+// Sync-disk writes are skipped entirely when debug logging is off (the common
+// case) — a significant per-turn cost saver.
+let debugLoggingEnabled = false;
+
 function log(...args: unknown[]) {
+  if (!debugLoggingEnabled) return;
   const msg = args.map(a => (typeof a === "string" ? a : JSON.stringify(a))).join(" ");
   const line = `[${new Date().toISOString()}] ${msg}\n`;
   try {
@@ -52,6 +58,7 @@ const plugin: Plugin = async ({ client, project, directory }: PluginInput) => {
   // 1. Load configuration (project + user + defaults)
   //    Reassignable for hot reload (via reload signal or file watcher event).
   let config = loadConfig(projectDir);
+  debugLoggingEnabled = config.debug;
 
   // 2. Scan skill files for self-declared triggers
   let scannedIndex: ScannedSkillIndex = new Map();
@@ -79,6 +86,7 @@ const plugin: Plugin = async ({ client, project, directory }: PluginInput) => {
   function performReload(reason: string): void {
     log(`[cr-debug] performReload: ${reason}`);
     config = loadConfig(projectDir);
+    debugLoggingEnabled = config.debug;
     if (config.scannerEnabled) {
       scannedIndex = scanSkillFiles(config, projectDir);
     } else {
@@ -128,6 +136,7 @@ const plugin: Plugin = async ({ client, project, directory }: PluginInput) => {
       const agentName = input.agent;
       const expandable = new Set<string>();
       const keywordOnly = new Set<string>();
+      const fileScoped = new Set<string>();
 
       if (agentName) {
         resolver.resolveAgentTriggers(agentName).forEach((n) => expandable.add(n));
@@ -140,19 +149,22 @@ const plugin: Plugin = async ({ client, project, directory }: PluginInput) => {
         // Individual skill keywords → keywordOnly (NO group expansion)
         resolver.resolveMessageTriggers(messageText).forEach((n) => keywordOnly.add(n));
 
+        // File/folder references → fileScoped (path-wins, NO group expansion)
         for (const p of extractPaths(messageText)) {
-          resolver.resolveFileTriggers(p).forEach((n) => expandable.add(n));
+          resolver.resolveFileTriggers(p).forEach((n) => fileScoped.add(n));
         }
       }
 
       config.skills.forEach((n) => expandable.add(n));
       resolver.getAlwaysOnSkills().forEach((n) => expandable.add(n));
 
-      // Expand groups only from expandable set
+      // Expand groups ONLY from expandable (agent/group-name/config/always).
+      // File-scoped skills stay path-pinned — tagging a file loads exactly what matched,
+      // not the whole group.
       resolver.expandGroups(Array.from(expandable)).forEach((n) => expandable.add(n));
 
-      // Merge: expandable + keyword-only (keyword-only don't get group expansion)
-      const skillNames = new Set([...expandable, ...keywordOnly]);
+      // Merge: expandable + keyword-only + file-scoped
+      const skillNames = new Set([...expandable, ...keywordOnly, ...fileScoped]);
 
       log(`[cr-debug]   resolved skill names: ${JSON.stringify(Array.from(skillNames))}`);
 
@@ -200,7 +212,9 @@ const plugin: Plugin = async ({ client, project, directory }: PluginInput) => {
       }
 
       mgr.flushPending();
-      log(`[cr-debug]   active skills after flush: ${mgr.getActiveSkills().length}`);
+      if (debugLoggingEnabled) {
+        log(`[cr-debug]   active skills after flush: ${mgr.getActiveSkills().length}`);
+      }
 
       // ── chatMessage injection mode (fallback path) ─────────────────
       if (config.injectionMethod === "chatMessage") {
@@ -479,18 +493,8 @@ interface ToolContextLike {
 }
 
 /**
- * Extract file-path-like strings from message text.
+ * Extract text content from OpenCode message parts.
  */
-function extractPaths(text: string): string[] {
-  const results = new Set<string>();
-  const pathRegex = /(?:[a-zA-Z]:[\\/])?(?:[\w.\-@()[\] ]+[\\/])+[\w.\-@()[\] ]+\.(\w{2,8})/g;
-  let match: RegExpExecArray | null;
-  while ((match = pathRegex.exec(text)) !== null) {
-    results.add(match[0].replace(/\\/g, "/"));
-  }
-  return Array.from(results);
-}
-
 function extractTextFromParts(parts: Part[] | unknown): string {
   if (!parts || !Array.isArray(parts)) return "";
   return (parts as unknown[])

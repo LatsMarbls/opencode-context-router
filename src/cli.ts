@@ -15,6 +15,7 @@ import { join } from "node:path";
 import { homedir, tmpdir } from "node:os";
 import { loadConfig, type PreloaderConfig } from "./config";
 import { SkillLoader } from "./loader";
+import { Resolver } from "./resolver";
 import { scanSkillFiles, type ScannedSkillIndex, type ScannedSkillMeta } from "./scanner";
 import { setCachePathForTesting } from "./scanCache";
 // ── Resolve config ──────────────────────────────────────────────────────────
@@ -177,11 +178,7 @@ function cmdMatrix(config: any, scannedIndex?: ScannedSkillIndex): string {
 function cmdCheck(filePath: string, config: any, scannedIndex?: ScannedSkillIndex): string {
   const lines: string[] = [];
   const ext = filePath.split(".").pop()?.toLowerCase() ?? "";
-  const fileName = filePath.split(/[\\/]/).pop() ?? "";
 
-  // Honor triggerIgnoreTags the same way the runtime does.
-  // Matches on path SEGMENTS only (not substrings) — "dist" doesn't match
-  // "src/distribution/Foo.php" but DOES match "dist/Foo.js".
   const ignoreTags = (config as any).triggerIgnoreTags ?? [];
   const segments = filePath.replace(/\\/g, "/").toLowerCase().split("/");
   const ignored = ignoreTags.some((tag: string) => segments.includes(tag.toLowerCase()));
@@ -193,51 +190,16 @@ function cmdCheck(filePath: string, config: any, scannedIndex?: ScannedSkillInde
   }
   lines.push("");
 
-  const matched: string[] = [];
-  const reasons: string[] = [];
-
-  // 1. fileTypeSkills
-  for (const [fe, names] of Object.entries((config as any).fileTypeSkills ?? {})) {
-    if (fe === `.${ext}` || fe === ext) {
-      for (const n of names as string[]) {
-        if (ignored) continue;
-        matched.push(n);
-        reasons.push(`extension .${ext}`);
-      }
-    }
-  }
-
-  // 2. pathPatterns
-  for (const [pat, names] of Object.entries((config as any).pathPatterns ?? {})) {
-    const re = new RegExp(
-      "^" + (pat as string).replace(/\*\*/g, ".*").replace(/\*/g, "[^/]*") + "$",
-    );
-    if (re.test(filePath) || re.test(fileName)) {
-      for (const n of names as string[]) {
-        if (ignored) continue;
-        matched.push(n);
-        reasons.push(`path ${pat}`);
-      }
-    }
-  }
-
-  // 3. Scanned skills from frontmatter (extensions only)
-  if (scannedIndex) {
-    for (const [name, meta] of scannedIndex) {
-      if (meta.triggers.extensions?.includes(`.${ext}`) || meta.triggers.extensions?.includes(ext)) {
-        if (ignored) continue;
-        matched.push(name);
-        reasons.push(`scanned extension .${ext}`);
-      }
-    }
-  }
+  // Use the SAME resolver the runtime plugin uses (path-wins semantics).
+  const resolver = new Resolver(config, scannedIndex);
+  const matched = resolver.resolveFileTriggers(filePath);
 
   if (matched.length === 0) {
     lines.push("No skills trigger for this file.");
   } else {
     lines.push("\x1b[1mTriggered skills:\x1b[0m");
-    for (let i = 0; i < matched.length; i++) {
-      lines.push(`  \x1b[32m✓\x1b[0m ${matched[i]}  (${reasons[i]})`);
+    for (const name of matched) {
+      lines.push(`  \x1b[32m✓\x1b[0m ${name}`);
     }
   }
 

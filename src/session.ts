@@ -41,6 +41,11 @@ export class SessionManager {
    *  Used by dedup to avoid re-scanning the entire system prompt every turn. */
   private injectedHashes = new Set<string>();
 
+  /** Content hash → token count. Avoids re-running BPE encode on unchanged
+   *  skill content (getActiveSkills/applyTokenBudget are called multiple times
+   *  per turn). */
+  private tokenCache = new Map<string, number>();
+
   /** Session ID this manager is bound to */
   readonly sessionID: string;
 
@@ -318,11 +323,17 @@ export class SessionManager {
    * Public so the in-session tool can display accurate per-skill token counts.
    */
   estimateTokens(text: string): number {
+    const key = hashContent(text);
+    const cached = this.tokenCache.get(key);
+    if (cached !== undefined) return cached;
+    let tokens: number;
     try {
-      return encode(text).length;
+      tokens = encode(text).length;
     } catch {
-      return Math.ceil(text.length / 4);
+      tokens = Math.ceil(text.length / 4);
     }
+    this.tokenCache.set(key, tokens);
+    return tokens;
   }
 
   /**

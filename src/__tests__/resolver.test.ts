@@ -35,10 +35,12 @@ describe('Resolver', () => {
       expect(resolver.resolveFileTriggers('src/app.php')).toContain('php-conventions');
     });
 
-    it('matches by path pattern', () => {
+    it('path match wins — suppresses extension triggers', () => {
       const resolver = new Resolver(baseConfig);
-      expect(resolver.resolveFileTriggers('src/Models/User.php')).toContain('model-rules');
-      expect(resolver.resolveFileTriggers('src/Models/User.php')).toContain('php-conventions');
+      // src/Models/User.php matches pathPattern "src/Models/**" → only model-rules loads,
+      // NOT the broad .php extension skills.
+      expect(resolver.resolveFileTriggers('src/Models/User.php')).toEqual(['model-rules']);
+      expect(resolver.resolveFileTriggers('src/Models/User.php')).not.toContain('php-conventions');
     });
 
     it('ignores paths in node_modules', () => {
